@@ -1,0 +1,206 @@
+---
+title: "Class 3 Slides (Additional Material from Lecture)"
+format: html
+editor: visual
+---
+
+## Week 4 (2/10)
+
+Today we are going to explore "Factors in R" and "Linear Regression".
+
+## Factors
+
+First load the following libraries:
+
+```{r}
+library(forcats)   
+library(ggplot2)
+library(tidyverse)
+```
+
+### Sorting a vector
+
+Here is a vector with the names of some months, which we want to sort, but can't use the sort function.
+
+```{r}
+# Vector with the names of some months:
+x1 <- c("Dec", "Apr", "Jan", "Mar")
+# We want to sort this vector but sort()
+# will not produce the desired outcome in this case
+sort(x1)
+```
+
+Instead, we need to do this:
+
+```{r}
+# Step 1:
+month_levels <- c(
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+)
+# Step 2:
+y1 <- factor(x1, levels = month_levels)
+y1
+# Now sort will produce the outcome we want:
+sort(y1)
+# The function levels() provides access the levls of a factor.
+levels(y1)
+```
+
+### Star Wars Example
+
+Star Wars Data: A summary of the frequency of each species in the star wars universe.
+
+First attach the star wars dataframe from dplyr
+
+```{r}
+attach(starwars)
+```
+
+Suppose that we want to a summary of the frequency of each species in the star wars universe.
+
+```{r}
+# Filter out the rows with NA values
+# groub by their species and count their quantities 
+starwars %>% filter(!is.na(species)) %>% 
+  group_by(species) %>% 
+  summarise(n = n()) %>% head(20)
+```
+
+We observe that several species have very low frequency so it would make sense to lump them together using the `fct_lump()` function and create a new group called "other" which, for example, will include all the species with frequency less than 3.
+
+```{r}
+# The fct_lump() function for classifying species with 
+#frequency less than 3 into a new group called "other":
+starwars %>%
+  filter(!is.na(species)) %>%
+  mutate(species = fct_lump(species, n = 3)) %>%
+  group_by(species) %>% 
+  summarise(n = n())
+```
+
+Suppose now, that we want to visualize the frequency of eye colors of all the characters in the star wars universe.
+
+```{r}
+# Visualize the frequency of eye colors of 
+# all the characters in the star wars universe:
+ggplot(starwars,aes(y = eye_color)) + geom_bar() 
+```
+
+Also, we can order the bars in the previous chart according to their frequency using the `fct_infreq()` function:
+
+```{r}
+# Order the bars according to their frequency:
+starwars %>%
+  mutate(eye_color = fct_infreq(eye_color)) %>%
+  ggplot(aes(y = eye_color)) + geom_bar() 
+```
+
+Finally, we may want to visualize the summary statistics of a certain variable based on a specific categorical feature.
+
+For example, it is interesting to see how average mass of the species in the star wars universe varies across different eye colors.
+
+```{r}
+# Average mass of star wars specicies based on different eye_colors:
+starwars %>% filter(!is.na(mass)) %>% 
+  group_by(eye_color) %>% 
+  summarise(average_mass = mean(mass)) %>% 
+  ggplot(aes(x = average_mass,y= eye_color)) + geom_point() # creates scatter plots
+```
+
+Finally, we can reorder factor levels by sorting along another variable using the `fct_reorder()` function. As an example we will reorder the levels of the variable eye color accoridng to the variable average mass:
+
+```{r}
+# Reorder the levels of the variable eye_color
+# accoridng to the variable average_mass:
+starwars %>% filter(!is.na(mass)) %>% 
+  group_by(eye_color) %>% 
+  summarise(average_mass = mean(mass)) %>% 
+  ggplot(aes(x = average_mass,y= fct_reorder(eye_color,average_mass))) + geom_point()
+```
+
+## Linear Regression
+
+Linear Regression is a supervised machine learning algorithm which is used to predict the value of an outcome variable, or response, Y, based on one or more input features, or explanatory, variables X.
+
+Suppose that Yi is the ith observation of the dependent variable and Xij is ith observation of the jth independent variable, for i = 1, \..., n and j = 1, 2, \..., p. Then, the basic model for multiple linear regression is X and the response variable Y.
+
+$$Y_i = \beta_0 + \beta_1x_{1i} + \beta_2x_{2i} + ... + \beta_px{pi}+\varepsilon_i$$ where $\varepsilon_i \sim N(0,\sigma^2)$ is an i.i.d. random variable.
+
+A multiple linear regression can be fitted with the `lm()` function in R. In our numerical analysis, we will demonstrate linear regression in a simple and easy to understand fashion by using the built-in data set "`cars`" that comes with R by default.\
+
+Response variable Y:
+
+-   mpg (miles/gallon)\
+
+Explanatory Variables X:
+
+-   cyl (Number of cylinders),
+
+-   hp (gross horsepower) and
+
+-   wt (weight).
+
+```{r}
+data(mtcars) # load the data from R
+help(mtcars) # see the online documentation for data description
+head(mtcars) # view the first few rows of the entire data set.
+```
+
+We will investigate the relationship between the response mpg and features: cyl, hp and wt.
+
+```{r}
+# Fit a multivariate linear regession model:
+LM <- lm(mpg ~ cyl + hp + wt, data = mtcars)
+
+# Finally, we’ll get the summary output using the summary() function:
+summary(LM)
+
+```
+
+The estimated regression coefficients $\beta_i$, $i = 1,...,3$ are shown in the 'Estimate' column.
+
+The fitted linear model is:\
+\$\hat{mpg} = 38.75179 - 0.94162cyl - 0.01904hp - 3.16697wt \$\
+Look at the significance codes. What do they tell us?
+
+### Residuals
+
+A good way to test the quality of the fit of the model is via a graphical investigation of the residuals $\varepsilon_i$, which are the differences between the real values and the predicted values $\varepsilon_i = y_i - \hat{y_i}$.
+
+To access the residuals of a linear model, use `residuals()` function:
+
+```{r}
+#Model Diagnostics
+# Access residuals of the fitted model and perform model diagnostics:
+res <- residuals(LM)
+plot(res)
+summary(res)
+
+# draw a qqplot
+qqnorm(res)
+# col: color 2 for red; 
+# lwd: thickness of line
+# lty: style of a line, 2 for dash line
+qqline(res,col=2,lwd = 2,lty=2)
+
+# plot(LM)
+```
+
+The pattern of residuals shown in plot should exhibit a random pattern (fluctuate around 0).
+
+Quantile-Quantile (QQ) plots) let you check that the data meet the assumption of normality. In particular, Q-Q plots take your sample data, sort it in ascending order, and then plot them versus the quantiles calculated from a theoretical distribution, in this case the normal distribution. If the residuals are from a normal population, they should fall close to the straight line.
+
+### Goodness-of-fit
+
+We can also look at $R^2$ and $\bar{R^2}$ (adjusted $R^2$) from `summary(fitted LM).` Their formulas are:
+
+$$
+R^2 = 1 - \frac{\sum_i(y_i - \hat{y_i})^2}{\sum_i(y_i - \bar{y_i})^2} \text{   and   } \bar{R}^2 = 1 - (1-R^2)\frac{n-1}{n-p-1}
+$$
+
+-   $R^2$ is defined as the proportion of the total variability explained by the regression model.
+
+-   One problem with this $R^2$ is that it invariably increases as you add more explanatory variables $x$ to your model. This encourages adding extra useless features.
+
+-   The adjusted $\bar{R}^2$ helps to mitigate this issue by penalizing additional variables.
