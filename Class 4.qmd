@@ -4,7 +4,7 @@ format: html
 editor: visual
 ---
 
-## Week 4 (2/10)
+## Week 4 (9/10)
 
 Today we are going to explore "Principle Component Analysis".
 
