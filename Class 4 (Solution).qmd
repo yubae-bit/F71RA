@@ -167,3 +167,8 @@ ggbiplot(mt_pr, ellipse = TRUE, labels = rownames(mtcars), groups = mtcars.count
 
 ```
 
+#ggcorrplot(cor(mtcars))
+#fviz_eig(mtcars.pca, addlabels = TRUE)
+#fviz_cos2(mtcars.pca, choice = "var", axes = 1)
+#fviz_cos2(mtcars.pca, choice = "var", axes = 2)
+#fviz_cos2(mtcars.pca, choice = "var", axes = 3)
