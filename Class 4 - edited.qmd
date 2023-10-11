@@ -1,0 +1,197 @@
+---
+title: "Class 4 Slides PCA"
+format: html
+editor: visual
+---
+
+## Week 5 (9/10)
+
+Today we are going to explore "Principle Component Analysis".
+
+## Principal Component Analysis (PCA)
+
+### Data set
+
+We'll use the built in dataset `mtcars`, which contains information on a number of cars from the magazine Motor Trend. For each car, the dataset gives the number of miles per gallon (`mpg`), number of cylinders (`cyl`), displacement in cubic centimetres (`disp`), and many other variables.\
+
+A complete list of the variables is given in the R documentation. Use `head()` to view the columns:
+
+```{r}
+head(mtcars)
+```
+
+Two columns represent categorical data (engine `vs` and transmission `am`). These columns have entries 0 or 1, representing V-shaped or straight engine, and automatic or manual transmission, respectively.\
+
+A general warning: some data sets might codify categorical variables making them look like numeric. Pay attention to your data!\
+
+Remove these columns so that we only use continuous data using `dplyr`.
+
+```{r}
+library(dplyr)
+mtcars <- dplyr::select(mtcars, !vs & !am) 
+mpg <- mtcars$mpg
+#mtcars <- mtcars %>% dplyr::select(-mpg)
+
+```
+
+#### Exercise "Optional" (Select using Base R)
+
+How would you exclude columns `vs` and `am` without using `dplyr`? You can simply use `dplyr`, but attempting this in base R gives you a glimpse into the inner working of `dplyr`. Hint: see `?which`.
+
+```{r}
+#mtcars <- mtcars[, c(1:7, 10, 11)]
+```
+
+Warning: doing this will overwrite the mtcars dataset (at least until the next session). If you want to retain the original data set, name the trimmed data frame differently.
+
+Note: R begins indexing at 1, not 0.
+
+### Princomp
+
+R has two built in functions to perform PCA. For this class we will use `princomp`. To centre and scale the data, the optional argument `cor` is set to `TRUE`.
+
+Define `mtcars.pca` and apply `princomp` to it.
+
+```{r}
+mtcars.pca <- princomp(mtcars, cor = TRUE)
+```
+
+The function `summary()` displays the principal components ranked by proportion of variance captured. Call it below:
+
+```{r}
+summary(mtcars.pca)
+```
+
+**Q: Explain to a lay person (e.g. Boris Johnson) what the summary table above tells us. That is, what does Comp.1-9 mean? What does Staroportion of Varindard deviation, Pance and Cumulative Proportion mean?**
+
+\*A:
+
+-   ***Standard Deviation**:*
+
+-   ***Proportion of Variance**:*
+
+-   \***Cumulative Proportion**:
+
+*In simple terms...*
+
+### PCA Scores and Loadings
+
+The output of `princomp` is a **list** containing various relevant outputs of the PCA procedure. To quickly view the list elements, what would we use?
+
+```{r}
+str(mtcars.pca)
+```
+
+This can be important for interpreting results of PCA!
+
+**Q: I have put the following question *"Explain again to our lay person what each of the list of the 7 outputs mean from above."* into ChatGPT, which gives us the following explanations. I want you to look up the documentation to check if the descriptions below are correct - if not, how would you describe them?**
+
+1.  **`sdev` (Standard Deviations):** These are like the speedometers for each trait of the cars, showing how much the models differ for specific characteristics. A higher 'speed' (or deviation) means that a characteristic varies significantly among the car models.
+
+2.  **`loadings` (Loadings):** Loadings are like the contribution of each car part to its overall performance. For instance, how much do the engine, tires, and brakes each contribute to a car's speed? Loadings help us understand the weight of each feature in the components.
+
+3.  **`center` (Center):** Think of the center as the 'average car' in our dataset. It represents the baseline from which we measure and compare the other cars, considering all their features.
+
+4.  **`scale` (Scale):** The scale is like the measuring tape we use. It ensures that we fairly compare all cars regardless of their original units, like comparing the weight and size of different car models.
+
+5.  **`n.obs` (Number of Observations):** This is the total number of car models we examined or observed in our dataset.
+
+6.  **`scores` (Scores):** Scores are like individual performance reports for each car, based on the traits (components) we've identified. It tells us how each car model performs concerning each trait.
+
+7.  **`call` (Call):** This is the specific command or 'instruction manual' we used to generate this analysis. It helps anyone who reads the report to understand how the analysis was conducted.
+
+### Biplots
+
+We can visualize the results in a `biplot` (see Week 4 slides). R does not have a built-in biplot function so we install `ggbiplot` as follows:
+
+```{r}
+#install.packages("devtools", dependencies = TRUE)
+library("devtools")
+#install_github("vqv/ggbiplot")
+library(ggbiplot)
+```
+
+The default package repository is CRAN. Some experimental packages might be available on Github instead of CRAN. The function `install_github` from `devtools` allows direct installation from github.
+
+Packages only need to be installed once, and then imported in each session. Optional alternative base R methods are provided at the end of these slides.
+
+**Q: What is github and who owns it? Again, try to explain this to a lay person.**
+
+*A:*
+
+Create a `biplot` by calling `ggbiplot` on `mtcars.pca`, and display the names of each car using `labels`.
+
+```{r}
+ggbiplot(mtcars.pca, labels = rownames(mtcars))
+```
+
+**Q: How can we make this figure larger? Save this image and specify the dimensions.**
+
+### Interpreting Results
+
+A reasonable assumption about the cars is that they might have similar properties if they are produced in the same region.\
+
+We can find evidence for (or against) this hypothesis by finding out where each car was manufactured, and color-coding points in the `biplot.` Create vector of countries of origin for each car
+
+```{r}
+mtcars.country <- c(rep("Japan", 3), rep("US", 4), rep("Europe", 7), rep("US", 3),
+"Europe", rep("Japan", 3), rep("US", 4), rep("Europe", 3), "US", rep("Europe",
+3))
+```
+
+The groups argument in `ggbiplot` assigns each group a color, so we can color-code cars based on their region using `groups = mtcars.country.`Setting `ellipse = TRUE` draws a shape around points in the same group, which will make clusters easier to see. Do this below:
+
+```{r}
+ggbiplot(mtcars.pca, ellipse = TRUE, labels = rownames(mtcars), groups = mtcars.country)
+```
+
+## Optional Content: Base R Implementation
+
+Exercise: Implement the above in base R, following the steps from George's Class 4 slides.
+
+```{r}
+
+mtcars <- dplyr::select(mtcars, !vs & !am) 
+
+#install.packages("devtools", dependencies = TRUE)
+library("devtools")
+#install_github("vqv/ggbiplot")
+library(ggbiplot)
+mtcars <- mtcars %>% select(-mpg)
+
+mtcars.pca <- princomp(mtcars, cor = TRUE)
+
+ggbiplot(mtcars.pca, labels = rownames(mtcars))
+
+mtcars.country <- c(rep("Japan", 3), rep("US", 4), rep("Europe", 7), rep("US", 3),
+"Europe", rep("Japan", 3), rep("US", 4), rep("Europe", 3), "US", rep("Europe",
+3))
+
+ggbiplot(mtcars.pca, ellipse = TRUE, labels = rownames(mtcars), groups = mtcars.country)
+
+library(ggcorrplot)
+ggcorrplot(cor(mtcars))
+library(factoextra)
+fviz_eig(mtcars.pca, addlabels = TRUE)
+fviz_cos2(mtcars.pca, choice = "var", axes = 1)
+fviz_cos2(mtcars.pca, choice = "var", axes = 2)
+fviz_cos2(mtcars.pca, choice = "var", axes = 3)
+```
+
+Elbow rule : stop when shape looks like an elbow
+
+PC1: `cyl, disp, mpg, wt, hp, drat`
+
+PC2: `gear, carb, qsec`
+
+replace y = cyl + disp + mpg + wt + drat by y = PC1
+
+```{r}
+PC1 <- mtcars.pca$scores[,1]
+
+model1 <- lm(mpg ~ PC1 + mtcars$drat + mtcars$gear + mtcars$carb + mtcars$qsec)
+summary(model1)
+
+model2 <- lm(mpg ~ mtcars$cyl + mtcars$disp + mtcars$hp + mtcars$wt + mtcars$drat + mtcars$gear + mtcars$carb + mtcars$qsec)
+summary(model2)
+```
