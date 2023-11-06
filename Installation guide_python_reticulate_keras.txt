@@ -1,0 +1,54 @@
+# Python, Reticulate and Keras
+rm(list=ls())
+install.packages('ISLR2')
+
+# Remove any pre-existing installations of the R packages keras, reticulate and tensorflow.
+# This is just so that we begin with a clean slate.
+tryCatch(
+  remove.packages(c("keras", "tensorflow", "reticulate")),
+  error = function(e) "Some or all packages not previously installed, that's ok!"
+)
+
+# Install the latest keras package from CRAN. 
+# This will also install dependencies tensorflow and reticulate.
+install.packages("keras", repos = 'https://cloud.r-project.org')
+
+# check your home directory
+R.home(component = "home")
+# create a new folder with name'ISLR-miniconda' in your home directory
+# Download and install miniconda to this folder 
+# https://docs.conda.io/en/latest/miniconda.html#latest-miniconda-installer-links
+
+# Set up environment varialbes and path which don't need to bother
+# Replace all the ~ with your home directory
+write('RETICULATE_AUTOCONFIGURE=FALSE', file = "~/.Renviron", append = TRUE)
+write(sprintf('RETICULATE_MINICONDA_PATH=%s',
+              normalizePath("~/ISLR-miniconda", winslash = "/", mustWork = FALSE)),
+      file = "~/.Renviron", append = TRUE)
+
+Sys.setenv(RETICULATE_AUTOCONFIGURE='FALSE',
+           RETICULATE_MINICONDA_PATH=normalizePath("~/ISLR-miniconda", winslash = "/", mustWork = FALSE))
+
+# source function from ISLR2 package
+source(system.file("helpers", "install.R", package = "ISLR2"))
+
+# install tensorflow command and it will take a while
+install_tensorflow()
+# If success, you see the message in red:
+# '*Tensorflow for Windows x86_64 has been successfully installed.'
+
+# install necessary modules of python
+library(reticulate)
+py_install("numpy")
+py_install("scipy")
+py_install("Pillow")
+
+# print out your current configuration 
+# This is useful when you want to explain your configuration to anyone else
+# or provide debugging information in any correspondence with the package authors
+print_py_config()
+
+# If the configuration is not successfully printed out,
+# read the error message and solve it case by case
+# e.g. you may need to update some packages mentioned in the error message
+

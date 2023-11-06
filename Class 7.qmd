@@ -1,0 +1,55 @@
+---
+title: "Class 7 (Solution)"
+format: html
+editor: visual
+---
+
+# Class 7 (6th Nov 2023)
+
+This notebook will guide you through the process of building a neural network model using keras and tensorflow in R. We will be working with a motor third party liability (MTPL) insurance dataset.
+
+Load the following libraries
+
+```{r}
+
+
+```
+
+However, you will need to install python on your local machine as keras and tensorflow act only as interfaces. You can do this by following the steps on Canvas from Week 4 Material "Installation guide_python_reticulate_keras.txt". I will also upload this guide on github. Essentially, you need to run this line of code:
+
+```{r}
+
+
+```
+
+**Please add comments to the codes below outlining what you think each line does!**
+
+## Data Preprocessing
+
+First, we will load and preprocess the data. Preprocessing includes converting character variables to factors, capping certain variables, and splitting the data into a learning set and a test set.
+
+```{r}
+
+```
+
+## Data Preparation for Neural Network
+
+Add comments to the codes below outlining what you think each line does.
+
+```{r}
+
+```
+
+## Neural Network Architecture
+
+We will define a neural network architecture with embedded layers for categorical predictors and several dense layers for the main architecture.
+
+```{r}
+
+```
+
+## Results
+
+```{r}
+
+```
