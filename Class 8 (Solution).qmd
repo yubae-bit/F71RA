@@ -1,0 +1,129 @@
+---
+title: "Class 8 (Solution)"
+format: html
+editor: visual
+---
+
+# Implementing a Bottleneck Neural Network in R
+
+## Introduction
+Welcome to our exploration of Bottleneck Neural Networks (BNNs) using the `keras` library in R. Today, we will delve into how BNNs can be a powerful tool for dimensionality reduction, especially in handling complex datasets like our `SportsCars` dataset. By the end of this class, you will have a hands-on understanding of building, training, and evaluating a BNN model in R.
+
+**Objective**: Gain practical experience in implementing a BNN and understand its applications in data analysis.
+
+**Real-World Application**: We'll explore how BNNs are revolutionizing the way we approach high-dimensional data in fields like automotive design, consumer behavior analysis, and more.
+
+## Overview of Bottleneck NNs
+Neural Networks Basics: Explain the basics and importance of neural networks.
+
+What is a Bottleneck Neural Network?: Describe the BNN and its role in dimensionality reduction.
+
+## Data Preprocessing
+
+```{r}
+# Clearing the environment
+rm(list=ls())
+
+# Loading necessary libraries
+library(keras)
+library(reticulate)
+library(tidyverse)
+library(ggplot2)
+
+# Reading the dataset
+SC <- read.csv('SportsCars.csv', sep = ";", header = TRUE)
+
+# Define new features
+SC <- SC %>% mutate(x1 = log(weight/max_power),
+                    x2 = log(max_power/cubic_capacity),
+                    x3 = log(max_torque),
+                    x4 = log(max_engine_speed),
+                    x5 = log(cubic_capacity))
+
+# Create the raw design matrix
+X_raw <- SC %>% select(x1, x2, x3, x4, x5)
+
+# Standardize the raw design matrix
+X <- apply(X_raw, 2, function(x) (x - mean(x))/sd(x))
+
+```
+## Building the BNN Model
+
+```{r}
+BottleneckThreeLayers <- function(q0, q1, q2) {
+Input <- layer_input(shape = c(q0),dtype = 'float32',name = 'input')
+  
+  Encoder <- Input %>% 
+    layer_dense(units = q1,activation = 'tanh', use_bias = FALSE, name ='Layer1') %>%
+    layer_dense(units = q2, activation = 'tanh', use_bias = FALSE, name ='Bottleneck')
+  
+  Decoder <- Encoder %>% 
+    layer_dense(units = q1,activation = 'tanh', use_bias = FALSE, name ='Layer3') %>%
+    layer_dense(units = q0, activation = 'linear', use_bias = FALSE, name ='Ouput')
+  
+  model <- keras_model(inputs = Input, outputs = Decoder)
+  model %>% compile(optimizer = optimizer_nadam(), loss = 'mean_squared_error')
+  model
+  }
+model1 <- BottleneckThreeLayers(5,7,2)
+summary(model1)
+
+```
+## Training the BNN Model
+
+Hyperparameters Explanation: Explain epochs, batch size, and verbosity.
+
+```{r}
+epochs <- 1000
+batch_size <- nrow(X)
+verbose <- 1
+
+fitted_model1 <- model1 %>% fit(X, X, epochs = epochs, batch_size = batch_size, verbose = verbose)
+plot(fitted_model1)
+
+```
+
+## Reconstruction Error
+
+```{r}
+# Explain the concept of Frobenius norm and its computation
+FNL <- sqrt(fitted_model1[[2]]$loss*5)
+dat_out <- data.frame(x = c(1:epochs), y = FNL)
+
+# Comparative analysis with PCA
+recon_error <- 0.61177
+# [Discuss the implications of different reconstruction errors]
+
+ggplot(dat_out, aes(x = x, y = y)) + geom_point() +
+  geom_hline(yintercept = recon_error, colour = "blue") +
+  labs(x = 'epochs', y = 'Frobenius norm loss',
+       title = "Gradient descent algorithm") +
+  ylim(0, max(sqrt(fitted_model1[[2]]$loss * 5)))
+
+fit0 <- model1 %>% predict(as.matrix(X)) 
+sqrt(sum((fit0 -X)^2)/nrow(X))
+
+```
+
+## Visualizing Reduced Dimensions
+
+```{r}
+# Detailed explanation of each step in the visualization process
+encoder <- keras_model(inputs = model1$input, outputs = get_layer(model1, 'Bottleneck')$output)
+y <- encoder %>% predict(as.matrix(X))
+
+# Classify the cars and set visualization limits
+ax_limit <- max(abs(y)) * 1.1
+SC <- SC %>% mutate(sports_type = cut(tau,breaks = c(0,17,21,100),
+                                      labels = c("tau <17 ( sports car )","17 <= tau <21 ", "tau >=21 ") ))
+
+# Visualization of data in reduced dimensions
+ggplot(data.frame(x = y[, 1], y = y[, 2], sports_type = SC$sports_type),
+       aes(x = x, y = y, color = sports_type)) +
+  geom_point() +
+  coord_cartesian(xlim=c(-ax_limit, ax_limit),ylim=c(-ax_limit, ax_limit)) +
+  labs(y = "2nd bottleneck neuron", x = "1st bottleneck neuron",
+       title = "Bottleneck neural network autoencoder")
+
+```
+
