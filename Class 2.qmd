@@ -5,7 +5,7 @@ editor: visual
 toc: TRUE
 ---
 
-## Class 2 (10/02/2023)
+## Class 2 (24/09/2024)
 
 In this class, we will go through the `dplyr` package in R.
 
