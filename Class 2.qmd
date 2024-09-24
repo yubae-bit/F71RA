@@ -16,7 +16,7 @@ In this class, we will go through the `dplyr` package in R.
 In computation, we often have to chain multiple operations together. Consider a toy example. We want to calculate:
 
 $$
-\arctan(\sin(\exp(\Gamma(x))).
+\arctan(\sin(\exp(\Gamma(x)))
 $$
 
 Try and write it as is in the following code chunk:
