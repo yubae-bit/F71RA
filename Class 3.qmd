@@ -154,3 +154,5 @@ $$
 -   One problem with this $R^2$ is that it invariably increases as you add more explanatory variables $x$ to your model. This encourages adding extra useless features.
 
 -   The adjusted $\bar{R}^2$ helps to mitigate this issue by penalizing additional variables.
+
+Now that you have completed the tutorial for this class, please try and install Keras and Tensorflow. You will know that it has been installed when "Class 7 (Solution).qmd" can be run in R Studio without any errors.
