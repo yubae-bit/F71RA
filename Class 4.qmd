@@ -4,7 +4,7 @@ format: html
 editor: visual
 ---
 
-## Week 5 (9/10)
+## Week 5 (8th Oct 2024)
 
 Today we are going to explore "Principle Component Analysis".
 
