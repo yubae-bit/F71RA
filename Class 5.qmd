@@ -5,7 +5,7 @@ editor: visual
 toc: true
 ---
 
-## Class 5 (23/10/2023)
+## Class 5 (22/10/2024)
 
 This week, we will be going through the codes from week 5 and 7 lectures. That is, continue learning about PCA. The codes throughout this notebook comes from "R Code Lecture Slides Part III; IV A and IV B".
 
