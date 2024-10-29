@@ -5,7 +5,7 @@ editor: visual
 toc: true
 ---
 
-# Class 6 (23/10/2023)
+# Class 6 (29/10/2024)
 
 In this class, we will expand on the reconstruction error that we briefly touched on last week.
 
