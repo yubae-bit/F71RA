@@ -1,5 +1,5 @@
 ---
-title: "Class 5 (Solution)"
+title: "Class 6"
 format: html
 editor: visual
 toc: true
