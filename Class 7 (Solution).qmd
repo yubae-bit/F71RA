@@ -4,7 +4,7 @@ format: html
 editor: visual
 ---
 
-# Class 7 (6th Nov 2023)
+# Class 7 (5th Nov 2024)
 
 This notebook will guide you through the process of building a neural network model using keras and tensorflow in R. We will be working with a motor third party liability (MTPL) insurance dataset.
 
