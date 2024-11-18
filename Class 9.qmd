@@ -1,0 +1,181 @@
+---
+title: "Class 9 (Solution)"
+format: html
+editor: visual
+---
+
+## Load Libraries
+
+```{r}
+# Load required libraries and clear environment
+library(tidyverse)
+library(ggplot2)
+library(cluster)
+rm(list = ls())
+set.seed(100)  # Ensure reproducibility
+```
+
+## Data Preprocessing
+
+```{r}
+#Step 1: Data preprocessing and set a seed to ensure reproducibility since the 
+#initial cluster centers arerandomly chosen.
+####################################################################
+
+rm(list = objects())
+library(tidyverse)
+library(ggplot2)
+
+#Step 1a: Use the set.seed() function to ensure that the initial random assignment of clusters are the same
+
+
+#Step 1b: Read the SportsCars.csv data into R and name this object SC:
+
+#Step 1c: Define a new set of variables:
+
+#Step 1d: Create the raw design matrix X_ raw:
+
+#Step 1e:  Standardize the raw design matrix Xraw by column
+# means and column standard deviations :
+
+```
+
+## Principal Component Analysis (PCA)
+
+```{r}
+#Step 2: Calculate again (for completeness) the PCA and add 
+#the coordinates to the original dataset.
+
+#Step 2a: Perform PCA for dimension reduction:
+
+#Step 2b: Add  thec PCs to the original sports car data
+
+```
+
+## K-means Clustering
+
+```{r}
+#Step 3: Consider a maximum number of K clusters and define objects 
+#for loop over k = 1, ...,K clusters
+####################################################################
+
+#Step 3a: We set the maximum number of clusters K=10 and we will perform 
+#K-means clustering for the data set X.
+
+#Step 3b: define objects for loop over K clusters:
+
+#Step 3c: Record the cluster assignment for each observation:
+
+#Step 3d: Total Within-Cluster Dissimilarity (TWCD)
+
+#Step 4: Use the for loop and the kmeans() function in R to 
+#perform K-means clustering for k= 1, ...,K.
+###################################################################
+
+#Step 4a: Use the 'kmeans' function to run the K-means algorithm for 1:k_m clusters. The #first argument of kmeans is matrix X and its second argument is the number of clusters 'cl'. 
+	# for cl = 2, the cluster centers are randomly assigned
+
+    
+    #Step 4b: For cl > 2, the previous cluster centers plus 'k_average'
+    # will be used as initial cluster centers:
+
+  
+  #Step 4c: Update the TWCD and record the results:
+
+  #The vector of within-cluster sum of squares
+
+  #A vector of integers (from 1:k) indicating the    
+  #cluster to which each point is allocated.
+     #A matrix of cluster centres.
+  
+  
+  #Step 4c: Set up the initial cluster centers for the next loop
+  
+
+```
+
+### Elbow Method to Determine Optimal Clusters
+
+```{r}
+#Step 5: Plot the total Within Cluster Dissimilarity (TWCD) to observe how it 
+#changes with respect to the total number of clusters.
+###################################################################
+
+#Step 5a: Use ggplot for the graph of TWCD vs the total number of clusters:
+
+
+#When we analyze the graph (elbow method) we can see that the graph will rapidly change from 4 to 5 creating an elbow shape. 
+#Step 5b: The optimal number of clusters is 4.
+
+
+```
+
+### Check the characteristics of optimal clusters
+
+```{r}
+#Step 6: Check the characteristics of the cl_opt<-4 clusters
+#################################################################
+# Step 6a: Use the function table and Classifier from Step 4 to  
+#find the number of observations in each of the cl_opt<-4 clusters:
+
+#Step 6b: Use Centers from Step 4 to find the centers 
+#of the cl_opt<-4 clusters:
+```
+
+### Summary of K-Means clustering
+
+```{r}
+#Step 7: Create a table for summarizing the K-means clustering 
+#results w.r.t. sports cars (expert judgment) for K = 4. 
+###################################################################
+#Step 7a: Type of cars:
+
+#Step 7b: Add the clusters to the sports car data set:
+
+#Step 7c: Compute the number of cars per car type in each cluster:
+
+```
+
+### Plotting the clusters
+
+```{r}
+#Step 8: We will plot a graph to illustrate the four clusters on the first 
+#two principal component axesfrom the PCA.
+###################################################################
+#Step 8a:  Cluster centers coordinates in first two principal components coordinates
+
+
+#Step 8b: Use the first two columns, PCs, and show the cluster centers in black:
+
+```
+## K-medoids Clustering
+
+```{r}
+#Step 1: Install and load the 'cluster' package: 
+
+#Step 2: As the initial cluster centers are randomly chosen,
+# a seed needs to be set to ensure reproducibility.
+
+#Step 3: We will use cl_opt<-4 clusters 
+#Note 1: Type in ?pam to have access to the online documentation 
+#which describes the arguments of the pam() function.  
+#Note 2: The manhattan distances are the sum of absolute differences
+
+#Step 4a: Find the number of observations in each cluster:
+
+#Step 4b: Find the medoid points. 
+#It is a matrix with in each row the coordinates of one medoid.
+
+
+#Step 4c: Find the integer vector of indices giving 
+#the medoid observation numbers
+
+#Step 5a: Add the cluster labels to the data 
+
+#Step 5b: Find the number of sports cars per cluster:
+
+#Step 6a: Medoids  coordinates in first  two  principal  components coordinates:
+
+#Step 6b: Use the  first  two  columns , PCs , and  show  the  cluster  centers  inblack:
+```
+
