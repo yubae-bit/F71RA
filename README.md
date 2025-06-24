@@ -14,6 +14,7 @@ https://www.youtube.com/watch?v=aircAruvnKk&t=4s&ab_channel=3Blue1Brown
 A YouTube link on installing Tensorflow and Keras in R
 https://www.youtube.com/watch?v=cIUg11mAmK4&t=1s&ab_channel=LiquidBrainBioinformatics
 
+Please note that in order to run Tensorflow via R studio, an older version of Python 3.9 is required.
 
 Best Regards
 Yubo (yr2001@hw.ac.uk)
