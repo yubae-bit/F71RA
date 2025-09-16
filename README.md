@@ -1,5 +1,5 @@
 # F71RA
-Machine Learning for Risk and Insurance 1
+Machine Learning for Risk and Insurance 1 2025
 
 Hi guys, this repo will contain all the notebooks for the remainder of this class. :)
 
