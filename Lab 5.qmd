@@ -1,0 +1,244 @@
+---
+title: "Lab 5"
+format: docx
+editor: visual
+toc: true
+---
+
+## Lab 5
+
+This week, we will be going through the codes from week 5 and 7 lectures. That is, continue learning about PCA. The codes throughout this notebook comes from "R Code Lecture Slides Part III; IV A and IV B".
+
+## PCA
+
+Recall that we use PCA to reduce the dimension for continuous explanatory variables $x$ using principal components and complicated mathematics. We have seen in the class last week that there are many packages that runs PCA for us. But how can we trust that the packages work properly? I would say that R its CRAN repositories is pretty trustworthy, it is managed by a large multinational corporation Posit, which is used in many many companies in the world. However, in actuarial work, we need to explain how we got to the specific answer in as much detail as possible because the regulators tell us to... Therefore, we need to try and understand how the PCs are computed mathematically. It is also important that our work can be reproduced using a different dataset to `mtcars`, so let us perform PCA again on the `SportsCars` dataset.
+
+Remove all objects from the R memory. What is the command for this?
+
+```{r}
+
+```
+
+### R Code Lecture Slides Part III
+
+Load the tidyverse, ggplot and GGally libraries
+
+```{r}
+ 
+```
+
+Go onto canvas and copy and paste the codes in the chunck below:
+
+```{r}
+ 
+```
+
+### R Code Lecture Slides Part IV A
+
+Define new features
+
+```{r}
+ 
+```
+
+Use the ggpairs () function for constructing a scatter plot matrix with different colors based on the three groups of cars :
+
+```{r}
+ 
+```
+
+Now paste the custom function for the empirical density plots:
+
+```{r}
+ 
+```
+
+Let us see what they tell us. Call each of the 5 density plots below:
+
+```{r}
+ 
+```
+
+Alternatively, we can check the QQ plots to see if the variables are normally distributed: `par(mfrow = c(a,b))` allows to split the screen into a grid of a rows and b columns.
+
+```{r}
+ 
+```
+
+#### Principal Component Analysis
+
+Step 1: Use the new set of features:
+
+```{r}
+ 
+```
+
+Step 2: Create the raw design matrix and name it `X_raw`, which includes `x1` to `x5`.
+
+```{r}
+ 
+```
+
+Step 3: Standardize the raw design matrix `Xraw` by column means and column standard deviations:
+
+```{r}
+ 
+```
+
+Now check the correlation matrix
+
+```{r}
+ 
+```
+
+We can also visualize it using the `ggcorplot` library
+
+```{r}
+ 
+```
+
+### R Code Lecture Slides Part IV B
+
+Step 1: Run the codes above (redundant as we are in a notebook)
+
+Step 2: Compute the SVD of the scaled matrix `X`
+
+```{r}
+ 
+```
+
+Step 3: Display the structure of the `svdX` object using the `str()` function:
+
+```{r}
+
+```
+
+Step 4: Extract the `V` matrix:
+
+```{r}
+
+```
+
+Step 5: Check the orthogonality of the matrices `V` and `t(V)`:
+
+```{r}
+
+```
+
+Note that the off-diagonal elements are not exactly 0 but they are very close to 0 which is fine.
+
+#### PC Scratch
+
+Now, we construct the principal components and summarize the results.
+
+Step 1: Compute the principal components (PCs) as `Y=XV`. Each column of `Y` represents a `PC` and each column of `V` provides the coefficients for `x1,...,x5`.
+
+```{r}
+
+```
+
+Step 2: Extract the singular values for each PC and compute the standard deviation of each principal component, the variation explained by each `PC` and the cumulative variation:
+
+```{r}
+
+
+```
+
+Step 3: Summarize the results:
+
+```{r}
+
+
+```
+
+#### `princomp`
+
+Perform PCA using the `princomp()` function
+
+Step 1: Use the `princomp()` function for the scaled matrix `X` and set `cor=TRUE` which means that the calculation will be based on eigen-decomposition of the matrix `A = t(X) %*% X`:
+
+```{r}
+
+```
+
+Step 2: Summarize the results:
+
+```{r}
+
+```
+
+Step 3: Compare with the previous results:
+
+```{r}
+
+```
+
+Display the structure of the `pca` object using the `str()` function in R:
+
+```{r}
+
+```
+
+Now we compare the eigenvectors which are computed using the `svd()` function to those which are calculated via the `princomp()` function.
+
+```{r}
+
+
+```
+
+#### Plots
+
+Next, we plot a scatter plot to show the cars represented by the five principal components coordinates.
+
+Step 1: Give names to the PCs and combine thim with sports car data set using `cbind()`:
+
+```{r}
+
+
+```
+
+Step 2: Plot the scatter plots using the `ggpairs()` function:
+
+```{r}
+
+```
+
+Next, we graphically illustrate all cars along the first two principal component axis:
+
+Step 1: Classify the cars using the values for `tau`:
+
+```{r}
+
+
+```
+
+Step 2: Plot the three types of cars using the first two principal components:
+
+```{r}
+
+
+```
+
+We can also graphically illustrate the same results using the `biplot()` function in R that we also used in the previous class.
+
+Step 1: Use `biplot()` function with the first two PCs in the first argument and the laodings (eigenvectors) in the second argument:
+
+Step 2: Add labels to the graph for the first two PCs:
+
+```{r}
+
+
+
+```
+
+#### Reconstruction Errors
+
+The reconstruction error can be seen as average squared distance between the original data points and respective projections onto principal subspace.
+
+The reconstruction errors are scaled by $\sqrt(n)$. We use the `for()` loop to compute these and we observe that for `p = 2` PCs we receive a reconstruction error of $0.6124$.
+
+```{r}
+
+
+
+```
