@@ -1,0 +1,165 @@
+---
+title: "Lab 6"
+format: docx
+editor: visual
+toc: true
+---
+
+# Lab 6
+
+In this class, we will expand on the reconstruction error that we briefly touched on last week.
+
+More generally, PCA is a type of unsupervised learning method used for dimension reduction. What do we mean by unsupervised learning? Let's try and answer this by looking at an exam question from SP8 (General Insurance Pricing) in September 2023.
+
+**Q1: Explain, in your own words, the differences between supervised and unsupervised learning, in the context of building a predictive model. \[5\]**
+
+**Solution:**
+
+## W8 Slides I
+
+### Autoencoders - mathematical formulation
+
+Recall from the lecture that an auto-encoder is an unsupervised learning method used for dimension reduction which consists of two mappings:
+
+$$\varphi : \mathbb{R}^q \rightarrow \mathbb{R}^p, \ \psi : \mathbb{R}^p \rightarrow \mathbb{R}^q,$$
+
+with dimension $p \leq q$. Therefore, an autoencoder typically leads to a loss of information.
+
+We choose a dissimilarity, or distance, function $d(.,.) : \mathbb{R}^q \times \mathbb{R}^q \rightarrow \mathbb{R}^+$ such that $d(x', x) = 0$ if and only if $x' = x$.
+
+Then, an autoencoder is a pair $(\varphi, \psi)$ of mappings such that their composition $\pi = \varphi \circ \psi$ leads to small reconstruction error with respect to the dissimilarity function $d(.,.)$: $$ x \mapsto d(\pi(x),x) \text{ is small,} $$where $x$ is the original data and $\pi(x)$ is its projection.
+
+### Autoencoders - PCA as an autoencoder
+
+-   The mapping $\varphi$ is called encoder, the mapping $\psi$ is called decoder (the encoder compresses the input and the decoder attempts to recreate the input from the compressed version provided by the encoder), and $y = \varphi(x) \in \mathbb{R}^p$ is the $p$-dimensional representation of $x \in \mathbb{R}^q$ which contains all information of $x$ up to a small reconstruction error.
+-   The PCA provides a first example of an autoencoder.
+-   The encoder in the case of PCA is the linear transform of the design matrix $X$ by the first $p$ columns of the eigenvector matrix $V_p$ and $X' = \varphi(X) = X V_p \in \mathbb{R}^{n \times p}$
+-   The decoder in the case of PCA is the way we transform $X'$ back to $n \times q$ matrix $X_p$, i.e., $X_p = \psi(X') = X V_p V_p^T$
+-   The dissimilarity function in the case of PCA is the squared Frobenius norm: $d(X_p, X) = ||X_p - X||_2^2$
+
+### Autoencoders - reconstruction of the original variables in the motivating data set using PCA
+
+-   In the previous lecture, for our motivating data set we chose ( p = 2 ) PCs and calculated the reconstruction error.
+-   Now we will graphically illustrate all the reconstructed values ( X_p ) on the y-axis against the original values ( X ) on the x-axis.
+
+```{r}
+
+
+```
+
+-   If the reconstruction was perfect, then all these points would lie on the orange diagonal line.
+-   We observe that the reconstruction with $p = 2$ PCs works rather well, the most difficult component seems $x_4$ which is the most non-Gaussian one.
+-   The PCA is optimal if we consider linear approximations under the squared Euclidean distance i.e. \$ d(x, y) = \|\|x - y\|\|\^2\$
+-   However, this is not appropriate for $x_4$.
+-   Next we will construct **nonlinear autoencoder** using a particular neural network architecture capable of discovering structure within data, the so called **bottleneck neural network** for dimension reduction.
+-   But before this we will start with a "gentle" introduction to neural networks.
+
+## W8 Slides II
+
+### The Poisson Distribution
+
+The probability mass function (pmf) of Poisson distribution $Pois(\mu)$ is
+
+$$ P_k = P(Y = y) = \frac{\mu^y e^{-\mu}}{y!} \quad y = 0,1,2,... \quad (1) $$
+
+with mean
+
+$$ E[Y] = \mu, $$
+
+and variance
+
+$$ Var(Y) = \mu. $$
+
+-   It should be noted that the mean of the Poisson distribution is the same as its variance.
+-   However, in reality, the claims are usually overdispersed due to unobserved heterogeneity. Thus, a model such as the Negative Binomial, whose variance exceeds its mean, is more appropriate for the number of claims.
+
+### The Poisson regression model for predicting insurance claims
+
+-   Assume that the number of claims, is denoted by $y_i$, for policyholder $i, i = 1, \dots, n$, are independent follow the Poisson distribution
+
+$$ y_i \sim Pois(\mu_i) $$
+
+where the parameter $\mu_i$ depends on the policyholder's characteristics $x_i$ and an offset of the claims $o_i$.
+
+-   For the Poisson regression with the canonical log-link function, we have that the average number of claims is given by
+
+$$ \mu : \chi \to \mathbb{R}^+ \quad \mu_i = g^{Pois}(x_i) = exp(o_i + \langle \beta, x_i \rangle) \quad (2) $$
+
+where $\beta$ is the vector of unknown regression coefficients to be estimated by maximum likelihood estimation (MLE).
+
+Q: What do you think the offset means?
+
+A: It is the exposure, typically the logarithm of the exposure like time, area or population.
+
+### Description of the motivating data set
+
+We used real claim frequency data from a French Motor Third-Part Liability (MTPL) data set in the R package `CASdatasets`.
+
+-   Response is the number of claims, with `Exposure` as the offset.
+
+The explanatory variables are:
+
+-   **Area**: Factor w/ 6 levels "A", "B", "C", "D", ...: 4 4 2 2 2 5 5 3 3 2 ...
+-   **VehPower**: int 5 5 6 7 7 6 6 7 7 ...
+-   **VehAge**: int 0 0 2 0 0 2 2 0 0 ...
+-   **DrivAge**: int 55 55 52 46 46 38 38 33 33 41 ...
+-   **BonusMalus**: int 50 50 50 50 50 50 50 50 68 68 50 ...
+-   **VehBrand**: Factor w/ 11 levels "B1", "B10", "B11", ...: 4 4 4 4 4 4 4 4 4 4
+-   **VehGas**: Factor w/ 2 levels "Diesel", "Regular": 2 2 1 1 1 2 2 1 1 1 ...
+-   **Density**: int 1217 1217 54 76 76 3003 3003 137 137 60 ...
+-   **Region**: Factor w/ 22 levels "R11", "R21", "R22", ...: 18 18 3 15 15 8 8 20 20 12 ...
+
+### Learning set and test set
+
+```{r}
+
+```
+
+### Poisson regression for the motivating data set
+
+-   We import and preprocess risk features and claim frequency data from French MTPL data set.
+-   The Poisson regression model is fitted on the claim frequency and 9 risk features, with the exposure as the offset.
+
+```{r}
+
+
+```
+
+### Deviance loss for the Poisson Regression
+
+-   To make the regression more in line with the NN model that we will use later for the same purpose, the **deviance loss** is introduced since minimization of deviance loss is equivalent to the process of training NNs.
+-   The deviance loss is defined as follows:
+
+$$
+\mathcal{L}_A(\beta) = \frac{2}{|A|} \sum_{i \in A} \left( \log f(y_i | \mu_i = y_i) - f(y_i | \mu_i = \hat{\mu_i}) \right)
+$$
+
+where $f(x)$ is the pmf of the Poisson regression model.
+
+```{r}
+
+```
+
+-   In particular, using the Equation for the Poisson model, the **deviance loss** is given by:
+
+    $$
+    \mathcal{L}_A(\beta) = \frac{2}{|A|} \sum_{i \in A} (y_i \log y_i - y_i - y_i \log \hat{\mu_i} + \hat{\mu_i})
+    $$
+
+-   By using the built-in density function for the Poisson distribution:
+
+```{r}
+
+```
+
+### SP8 Exam Questions (Sep 2023)
+
+(i) **State the qualities of a good rating factor.** \[3\]
+
+**A general insurance company that writes a variety of lines of business has been approached by a third party offering data that could be useful as new rating factors.**
+
+(ii) **Outline the analyses the pricing actuary could undertake to evaluate the potential new factors.** \[3\]
+
+(iii) **Suggest considerations that would have to be taken into account before using the factors if the analyses showed they were predictive.** \[4\]
+
+\[Total 10\]
