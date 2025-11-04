@@ -1,0 +1,89 @@
+---
+title: "Lab 7"
+format: docx
+editor: visual
+toc: TRUE
+---
+
+# Lab 7
+
+This notebook will guide you through the process of building a neural network model using keras and tensorflow in R. We will be working with a motor third party liability (MTPL) insurance dataset.
+
+Load the following libraries
+
+```{r}
+library(keras)
+library(tensorflow)
+library(dplyr)
+library(readr)
+```
+
+However, you will need to install python on your local machine as keras and tensorflow act only as interfaces. You can do this by following the steps on Canvas from Week 4 Material "Installation guide_python_reticulate_keras.txt". I will also upload this guide on github. Essentially, you need to run this line of code:
+
+```{r}
+# Sys.setenv(
+#   RETICULATE_AUTOCONFIGURE='FALSE',
+#   RETICULATE_MINICONDA_PATH="C:/F71RA-Miniconda/",mustWork = FALSE
+# )
+# source(system.file("helpers", "install.R", package = "ISLR2"))
+# install_miniconda_and_tensorflow()
+
+```
+
+**Please add comments to the codes below outlining what you think each line does!**
+
+## Data Preprocessing
+
+First, we will load and preprocess the data. Preprocessing includes converting character variables to factors, capping certain variables, and splitting the data into a learning set and a test set.
+
+```{r}
+
+```
+
+## Data Preparation for Neural Network
+
+Add comments to the codes below outlining what you think each line does.
+
+```{r}
+#To do: crate the following matrices
+# - Design Matrix for continuous variables
+# - Matrices for the categorical variables
+# - Matrix for offset 
+
+
+```
+
+## Neural Network Architecture
+
+We will define a neural network architecture with embedded layers for categorical predictors and several dense layers for the main architecture.
+
+```{r}
+# ------------------ Step 2: Neural Network -------------------------------------------------------
+
+# ------------------ Step 2.1: Hyperparameters initialization -------------------------------------
+
+
+
+# ------------------ Step 2.2: Input layer --------------------------------------------------------
+  
+
+
+# ------------------ Step 2.3: Embedding layer ----------------------------------------------------
+
+
+
+# ------------------ Step 2.5: Model configuration and fitting ------------------------------------
+
+
+
+
+```
+
+## Results
+
+```{r}
+# Predicted value of the claim numbers
+
+```
+
+### Task: try and change the loss function from poisson to negative binomial.

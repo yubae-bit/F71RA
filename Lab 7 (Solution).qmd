@@ -1,0 +1,251 @@
+---
+title: "Lab 7"
+format: docx
+editor: visual
+toc: TRUE
+---
+
+# Lab 7
+
+This notebook will guide you through the process of building a neural network model using keras and tensorflow in R. We will be working with a motor third party liability (MTPL) insurance dataset.
+
+Load the following libraries
+
+```{r}
+library(keras)
+library(tensorflow)
+library(dplyr)
+library(readr)
+```
+
+However, you will need to install python on your local machine as keras and tensorflow act only as interfaces. You can do this by following the steps on Canvas from Week 4 Material "Installation guide_python_reticulate_keras.txt". I will also upload this guide on github. Essentially, you need to run this line of code:
+
+```{r}
+# Sys.setenv(
+#   RETICULATE_AUTOCONFIGURE='FALSE',
+#   RETICULATE_MINICONDA_PATH="C:/F71RA-Miniconda/",mustWork = FALSE
+# )
+# source(system.file("helpers", "install.R", package = "ISLR2"))
+# install_miniconda_and_tensorflow()
+
+```
+
+**Please add comments to the codes below outlining what you think each line does!**
+
+## Data Preprocessing
+
+First, we will load and preprocess the data. Preprocessing includes converting character variables to factors, capping certain variables, and splitting the data into a learning set and a test set.
+
+```{r}
+# Load your dataset here
+dat <- read_csv("freMTPL2freq.csv")
+
+
+for(i in seq_along(dat)){
+  if(is.character(dat[[i]])){
+    dat[[i]] <- factor(dat[[i]])
+  }
+}
+
+dat$ClaimNb <- pmin(dat$ClaimNb, 4)
+dat$Exposure <- pmin(dat$Exposure, 1)
+
+## Learn Test Split 
+
+learn_idx <- sample(1:nrow(dat), round(0.9*nrow(dat)), replace = FALSE) # learning sample index
+learn <- dat[learn_idx, ]
+test <- dat[-learn_idx, ]
+
+n_l <- nrow(learn)
+n_t <- nrow(test)
+```
+
+## Data Preparation for Neural Network
+
+Add comments to the codes below outlining what you think each line does.
+
+```{r}
+#To do: crate the following matrices
+# - Design Matrix for continuous variables
+# - Matrices for the categorical variables
+# - Matrix for offset 
+
+MM_scaling <- function(x){ 2*(x-min(x))/(max(x)-min(x)) - 1}
+
+dat_NN <- data.frame(ClaimNb = dat$ClaimNb)
+dat_NN$DriveAge <- MM_scaling(dat$DrivAge)
+dat_NN$BonusMalus <- MM_scaling(dat$BonusMalus)
+dat_NN$Area <- MM_scaling(as.integer(dat$Area))
+dat_NN$VehPower <- MM_scaling(as.numeric(dat$VehPower))
+# dat_NN$VehAge <- MM_scaling(as.numeric(dat$VehAgeGLM))
+dat_NN$VehAge <- MM_scaling(as.numeric(dat$VehAge))
+dat_NN$Density <- MM_scaling(dat$Density)
+dat_NN$VehGas <- MM_scaling(as.integer(dat$VehGas))
+
+## Learn Test Split 
+
+learn_NN <- dat_NN[learn_idx,]
+test_NN <- dat_NN[-learn_idx,]
+
+## 
+
+Design_learn <- as.matrix(learn_NN[ , -1])
+Design_test <- as.matrix(test_NN[ ,-1])
+
+# DrivAge_learn <- as.matrix(learn_NN$DriveAge)
+# DrivAge_test  <- as.matrix(test_NN$DriveAge)
+# BonusMalus_learn
+# BonusMalus_test
+
+Br_learn <- as.matrix(as.integer(learn$VehBrand)) - 1 
+Br_test <- as.matrix(as.integer(test$VehBrand)) - 1
+
+Re_learn <- as.matrix(as.integer(learn$Region)) - 1
+Re_test <- as.matrix(as.integer(test$Region)) - 1
+
+
+Vol_learn <- as.matrix(learn$Exposure)
+Vol_test <- as.matrix(test$Exposure)
+LogVol_learn <- log(Vol_learn)
+LogVol_test <- log(Vol_test)
+
+Y_learn <- as.matrix(learn_NN$ClaimNb)
+Y_test <- as.matrix(test_NN$ClaimNb)
+
+```
+
+## Neural Network Architecture
+
+We will define a neural network architecture with embedded layers for categorical predictors and several dense layers for the main architecture.
+
+```{r}
+# ------------------ Step 2: Neural Network -------------------------------------------------------
+
+# ------------------ Step 2.1: Hyperparameters initialization -------------------------------------
+
+q1 <- 20 # the dimension of the 1st hidden layer
+q2 <- 15 # the dimension of the 2nd hidden layer
+q3 <- 10 # the dimension of the 3rd hidden layer
+qEmb <- 2 # the dimension of the embedded layer for "VehBrand" and "Region"
+
+epochs <- 200 # number of epochs to train the model
+batchsize <- 10000 # number of samples per gradient update
+
+# ------------------ Step 2.2: Input layer --------------------------------------------------------
+  
+  # Input layer for continuous features
+# DesignShape <- ncol(learn_NN) - 1 # the number of the continuous predictors
+
+Design <- layer_input(shape = ncol(learn_NN) - 1, dtype = 'float32', name = 'Design')
+
+# Input layer for categorical features
+
+Br_ndistinct <- length(unique(learn$VehBrand)) # number of vehicle brands = 11
+Re_ndistinct <- length(unique(learn$Region)) # number of regions = 21
+
+VehBrand <- layer_input(shape = 1, dtype = 'int32', name = 'VehBrand')
+Region <- layer_input(shape = 1, dtype = 'int32', name = 'Region')
+
+# Input layer for Exposure (as the offset)
+LogVol <- layer_input(shape = 1, dtype = 'float32', name = 'LogVol')
+Vol <- layer_input(shape = 1, dtype = 'float32', name = 'Vol')
+
+# ------------------ Step 2.3: Embedding layer ----------------------------------------------------
+
+# Create embedding layer for categorical predictors (dimension: qEmb = 2)
+# Vehicle Brand: 11 -> 2
+# Region: 21 -> 2
+
+BrEmb = VehBrand %>%
+  layer_embedding(input_dim = Br_ndistinct, output_dim = qEmb, input_length = 1, name = 'BrEmb') %>%
+  layer_flatten(name = 'Br_flat')
+ReEmb = Region %>%
+  layer_embedding(input_dim = Re_ndistinct, output_dim = qEmb, input_length = 1, name = 'ReEmb') %>%
+  layer_flatten(name = 'Re_flat')
+
+
+# ------------------ Step 2.4: Main architecture and Output layer ---------------------------------
+
+# Main architecture with 3 hidden layers
+Network <- list(Design, BrEmb, ReEmb) %>% layer_concatenate(name = 'concate') %>%
+  
+  # 1st hidden layer
+  layer_dense(units = q1, activation = 'tanh', name = 'hidden1') %>%
+  
+  # 2nd hidden layer
+  layer_dense(units = q2, activation = 'tanh', name = 'hidden2') %>%
+  
+  # 3rd hidden layer
+  layer_dense(units = q3, activation = 'tanh', name = 'hidden3') %>%
+  
+  # provide one neuron in the output layer
+  layer_dense(units = 1, activation = 'linear', name = 'Network')
+
+
+# Output layer to combine the main architecture and the offset layer (Exposure)
+Response = (Network + LogVol) %>%
+  
+  # give the response
+  layer_dense(units = 1,
+              activation = 'exponential',
+              name = 'Response',
+              trainable = FALSE,
+              weights = list(array(1, dim = c(1,1)), array(0, dim = c(1))))
+
+# ------------------ Step 2.5: Model configuration and fitting ------------------------------------
+
+# Model assembly
+model <- keras_model(inputs = c(Design, VehBrand, Region, LogVol), outputs = c(Response))
+
+summary(model)
+
+# Model configuration
+model %>% compile(
+  loss = 'poisson', # set poisson deviance loss function as the objective loss function
+  optimizer = 'nadam'
+)
+
+# Model fitting by running gradient descent method to minimize the objective loss function
+{ 
+  
+  t1 <- proc.time()
+  
+  fit <- model %>% fit(
+    
+    list(Design_learn, Br_learn, Re_learn, LogVol_learn), # all predictors
+    Y_learn, # response
+    
+    verbose = 1, # verbose = 0 silences the progress bar for the process
+    # verbose = 1 shows the fitting process, incl. learning loss and validation loss, epoch by epoch
+    
+    epochs = epochs, # epochs = 1,000
+    
+    batch_size = batchsize, # batchsize = 10,000
+    
+    validation_split = 0.2 # 20% as validation set
+    
+  )
+  
+  print(proc.time()-t1)
+}
+
+
+```
+
+## Results
+
+```{r}
+# Predicted value of the claim numbers
+learn$nn0 <- as.vector(model %>% predict(list(Design_learn, Br_learn, Re_learn, LogVol_learn)))
+test$nn0 <- as.vector(model %>% predict(list(Design_test, Br_test, Re_test, LogVol_test)))
+
+dev.loss <- function(y, mu, density.func) {
+  logL.tilde <- log(density.func(y, y))
+  logL.hat <- log(density.func(y, mu))
+  2 * mean(logL.tilde - logL.hat)
+}
+
+dev.loss(y = learn$ClaimNb, mu = learn$nn0, dpois)
+```
+
+### Task: try and change the loss function from poisson to negative binomial.
