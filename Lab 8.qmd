@@ -1,0 +1,54 @@
+---
+title: "Lab 8"
+format: html
+editor: visual
+---
+
+# Implementing a Bottleneck Neural Network in R
+
+## Introduction
+
+Welcome to our exploration of Bottleneck Neural Networks (BNNs) using the `keras` library in R. Today, we will delve into how BNNs can be a powerful tool for dimensionality reduction, especially in handling complex datasets like our `SportsCars` dataset. By the end of this class, you will have a hands-on understanding of building, training, and evaluating a BNN model in R.
+
+**Objective**: Gain practical experience in implementing a BNN and understand its applications in data analysis.
+
+**Real-World Application**: We'll explore how BNNs are revolutionizing the way we approach high-dimensional data in fields like automotive design, consumer behavior analysis, and more.
+
+## Overview of Bottleneck NNs
+
+Neural Networks Basics: Explain the basics and importance of neural networks.
+
+What is a Bottleneck Neural Network?: Describe the BNN and its role in dimensionality reduction.
+
+## Data Preprocessing
+
+```{r}
+
+```
+
+## Building the BNN Model
+
+```{r}
+
+```
+
+## Training the BNN Model
+
+Hyperparameters Explanation: Explain epochs, batch size, and verbosity.
+
+```{r}
+
+```
+
+## Reconstruction Error
+
+```{r}
+
+```
+
+## Visualizing Reduced Dimensions
+
+```{r}
+
+
+```
