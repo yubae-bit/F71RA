@@ -1,103 +1,248 @@
 ---
-title: "Lab 1"
+title: "Lab 1: R Foundations for Risk and Insurance"
+subtitle: "F71RA Machine Learning for Risk and Insurance 1"
 format: docx
 editor: visual
 toc: true
 ---
 
-## 1: Matrix Algebra Exercises
+## Before you start
 
-### Exercise 1.1: Matrix Creation
+**Learning objectives.** By the end of this lab you should be able to
 
-Creating a matrix involves arranging numbers in rows and columns. Create a $3\times3$ matrix $M$ with random integer values ranging from 1 to 10.
+-   create and manipulate matrices in R (multiplication, inversion, transposition) and recognise when an operation is not defined;
+-   compute and interpret summary statistics for insurance data, with particular attention to skewness and heavy tails;
+-   simulate data from a known model, fit a linear regression with `lm()`, and check whether the fitted model recovers the truth.
+
+**Packages.** Base R covers most of this lab. For Exercise 2.5 you will need the `moments` package:
+
+```{r}
+#| eval: false
+install.packages("moments")
+```
+
+**Reproducibility.** Several exercises use random numbers. Run the chunk below once at the start of your session so that your "random" values match the model answers.
+
+```{r}
+set.seed(71)
+```
+
+**Submission.** Complete every chunk, render the document, and submit the rendered file. Where an exercise asks a question in words, answer it in a sentence or two directly below the chunk.
+
+------------------------------------------------------------------------
+
+## 1. Matrix algebra
+
+Almost every method in this course, from linear regression to neural networks, is a sequence of matrix operations. These exercises make sure you are comfortable with the basic building blocks in R.
+
+### Exercise 1.1: Creating a matrix
+
+Create a $3 \times 3$ matrix $M$ whose entries are random integers between 1 and 10 (use `sample()`). Print it, then print `dim(M)`.
 
 ```{r}
 
 ```
 
-### Exercise 1.2: Matrix Multiplication
-
-Matrix multiplication is a fundamental operation in linear algebra. Generate two random matrices $A$ $(4\times3)$ and $B$ $(3\times2)$ and compute their product $C$.
+Now create the same matrix with `byrow = TRUE`. In one sentence, explain what changed and why.
 
 ```{r}
 
 ```
 
-### Exercise 1.3: Matrix Inversion
+### Exercise 1.2: Matrix multiplication
 
-Matrix inversion is the process of finding the ”inverse” of a matrix, denoted as $A^{−1}$. Create a $2x2$ matrix `X` and calculate its inverse `X_inv` if it exists.
-
-```{r}
-
-```
-
-### Exercise 1.4: Matrix Transposition
-
-Matrix transposition involves switching the rows and columns of a matrix. Generate a random $4\times2$ matrix $D$ and calculate its transpose $D^\top$ using the `t()` function.
+Generate a random $4 \times 3$ matrix $A$ and a random $3 \times 2$ matrix $B$, and compute the product $C = AB$ using `%*%`.
 
 ```{r}
 
 ```
 
-## 2: Descriptive and Summary Statistics Exercises
-
-### Exercise 2.1: Data Creation
-
-Generate a dataset with 100 random values for $X\sim N(0,1)$.
+Before you run any code: what are the dimensions of $C$? Check your answer with `dim(C)`. Then try `B %*% A` and explain the error message. Finally, compare `A %*% B` with `A * B` (or explain why the second one fails).
 
 ```{r}
 
 ```
 
-### Exercise 2.2: Variance and Standard Deviation
+### Exercise 1.3: Matrix inversion
 
-Variance and standard deviation are measures of the spread or dispersion of a dataset. Calculate the variance and standard deviation of the $X$ variable.
+Not every square matrix has an inverse. Create the following two matrices and compute `det()` for each:
 
-```{r}
-
-```
-
-### Exercise 2.3: Histogram
-
-A histogram is a graphical representation of the distribution of data. Create a histogram for the $X$ variable with 10 bins using the `hist()` function.
-
-```{r}
-
-
-```
-
-### Exercise 2.4: Correlation Matrix
-
-Generate a dataset with two variables $X$ and $Y$ and calculate their correlation matrix.
-
-```{r}
-
-
-```
-
-### Exercise 2.5: Skewness and Kurtosis
-
-Skewness is a measure of symmetry, or more precisely, the lack of symmetry. A distribution, or data set, is symmetric if it looks the same to the left and right of the center point. Kurtosis is a measure of whether the data are heavy-tailed or light-tailed relative to a normal distribution. Compute the skewness and kurtosis of the $X$ variable.
+$$
+X_1 = \begin{pmatrix} 2 & 1 \\ 1 & 3 \end{pmatrix}, \qquad
+X_2 = \begin{pmatrix} 2 & 4 \\ 1 & 2 \end{pmatrix}.
+$$
 
 ```{r}
 
 ```
 
-## 3: Linear Regression Exercises
-
-### Exercise 3.1: Data Generation
-
-Generating a synthetic dataset involves creating a dataset with known properties for testing purposes. Create a synthetic dataset with two variables $X$ and $Y$ for linear regression analysis.
-
-```{r}
-
-
-```
-
-### Exercise 3.2: Multiple Linear Regression
-
-Multiple linear regression involves using multiple predictors to predict a response variable. Extend the dataset to include another predictor $Z$ and fit a multiple linear regression model using the `lm()` function. Now try and interpret this model using the `summary()` function.
+Use `solve()` to invert $X_1$, and verify that $X_1 X_1^{-1}$ is the identity matrix. Then try to invert $X_2$. What happens, and how could you have predicted it from the determinant?
 
 ```{r}
 
 ```
+
+### Exercise 1.4: Transposition
+
+Generate a random $4 \times 2$ matrix $D$ and compute its transpose with `t()`. Then compute $D^\top D$ and $D D^\top$. What are their dimensions, and which one is more likely to be invertible? (You will meet $D^\top D$ again in Section 3.)
+
+```{r}
+
+```
+
+------------------------------------------------------------------------
+
+## 2. Descriptive statistics for claims data
+
+In this section we work with a small simulated motor insurance portfolio. Claim sizes in practice are strongly right-skewed: most claims are small, and a few are very large. We simulate this with a lognormal distribution.
+
+### Exercise 2.1: Building the dataset
+
+Run the chunk below to create a data frame `claims` with 500 policies. Each row records the driver's age, the vehicle's age, the sum insured, and the size of one claim.
+
+```{r}
+n <- 500
+claims <- data.frame(
+  driver_age  = sample(18:80, n, replace = TRUE),
+  vehicle_age = sample(0:15, n, replace = TRUE),
+  sum_insured = round(runif(n, 5000, 40000), -2)
+)
+claims$claim_size <- exp(7 + 0.00003 * claims$sum_insured
+                         - 0.01 * claims$driver_age + rnorm(n, 0, 0.8))
+head(claims)
+```
+
+Use `str()` and `summary()` to inspect the data. Which variable has the largest gap between its mean and its median? What does that tell you about its distribution?
+
+```{r}
+
+```
+
+### Exercise 2.2: Variance and standard deviation
+
+Compute the variance and standard deviation of `claim_size` using `var()` and `sd()`.
+
+```{r}
+
+```
+
+R's `var()` divides by $n-1$, not $n$. Compute the population variance by hand (i.e. $\frac{1}{n}\sum (x_i - \bar{x})^2$) and confirm the two differ by a factor of $(n-1)/n$. Why does R use $n-1$ by default?
+
+```{r}
+
+```
+
+### Exercise 2.3: Histograms
+
+Draw a histogram of `claim_size` with roughly 30 bins. Then draw a histogram of `log(claim_size)`. Describe the shape of each in one sentence.
+
+```{r}
+
+```
+
+Why do actuaries so often model claim sizes on the log scale? What would go wrong if you fitted a normal distribution directly to `claim_size`?
+
+### Exercise 2.4: Correlation
+
+Compute the correlation matrix of `driver_age`, `vehicle_age`, `sum_insured` and `claim_size` using `cor()`.
+
+```{r}
+
+```
+
+Which variables are most strongly related to `claim_size`? Do the signs match how the data were generated in Exercise 2.1? Produce a scatter plot of `claim_size` against the strongest predictor.
+
+```{r}
+
+```
+
+### Exercise 2.5: Skewness and kurtosis
+
+Skewness measures asymmetry; a right-skewed distribution has a long right tail and positive skewness. Kurtosis measures how heavy the tails are relative to a normal distribution, which has kurtosis 3.
+
+Using the `moments` package, compute the skewness and kurtosis of `claim_size` and of `log(claim_size)`.
+
+```{r}
+library(moments)
+
+```
+
+Now simulate 500 values from $N(0, 1)$ and compute the same two quantities. Comment on the differences. Why do heavy tails matter for an insurer more than for, say, a retailer analysing customer heights?
+
+```{r}
+
+```
+
+------------------------------------------------------------------------
+
+## 3. Linear regression
+
+We now fit our first predictive model. The key idea in this section is to **simulate data from a model whose parameters you know**, fit the model, and check whether the fit recovers the truth. This is a habit you should keep for every method in the course.
+
+### Exercise 3.1: Simple linear regression
+
+Simulate 200 observations from the model
+
+$$
+Y = 2 + 3X + \varepsilon, \qquad X \sim N(0,1), \quad \varepsilon \sim N(0, 1).
+$$
+
+Store them in a data frame `sim`.
+
+```{r}
+
+```
+
+Fit the model `lm(Y ~ X, data = sim)`, print `coef()`, and plot the data with the fitted line added using `abline()`. How close are the estimated intercept and slope to 2 and 3?
+
+```{r}
+
+```
+
+### Exercise 3.2: Multiple linear regression
+
+Add a second predictor $Z \sim N(0,1)$ and regenerate $Y$ from
+
+$$
+Y = 2 + 3X - 1.5Z + \varepsilon .
+$$
+
+Fit `lm(Y ~ X + Z, data = sim)` and look at `summary()`.
+
+```{r}
+
+```
+
+Answer the following in words:
+
+1.  What does the coefficient on $Z$ mean in plain language?
+2.  Is each coefficient statistically significant? Which column of the summary tells you this?
+3.  What does the $R^2$ value tell you, and why is it not 1 even though you know the true model?
+
+### Exercise 3.3: Regression on real-ish data
+
+Return to the `claims` data from Section 2. Fit a linear regression of `log(claim_size)` on `driver_age`, `vehicle_age` and `sum_insured`.
+
+```{r}
+
+```
+
+Compare the fitted coefficients with the values used to generate the data in Exercise 2.1. Which predictor is doing nothing, and does the model agree?
+
+------------------------------------------------------------------------
+
+## Stretch exercise: regression by hand
+
+The `lm()` function solves the *normal equations*. For a design matrix $\mathbf{X}$ (with a column of ones for the intercept) and response vector $\mathbf{y}$, the least-squares estimate is
+
+$$
+\hat{\boldsymbol\beta} = (\mathbf{X}^\top \mathbf{X})^{-1} \mathbf{X}^\top \mathbf{y}.
+$$
+
+Using only the matrix tools from Section 1 (`cbind()`, `t()`, `%*%`, `solve()`), compute $\hat{\boldsymbol\beta}$ for the model in Exercise 3.2 and confirm it matches `coef()` from `lm()`.
+
+```{r}
+
+```
+
+Why did we need $\mathbf{X}^\top \mathbf{X}$ to be invertible? What would happen if $Z$ were an exact linear function of $X$? Try it.
