@@ -1,5 +1,5 @@
 # F71RA
-Machine Learning for Risk and Insurance 1 2025
+Machine Learning for Risk and Insurance 1 2026
 
 Hi guys, this repo will contain all the notebooks for the remainder of this class. :)
 
@@ -10,11 +10,12 @@ https://www.actuarialdatascience.org/ADS-Tutorials/
 
 3B1B Neural Networks
 https://www.youtube.com/watch?v=aircAruvnKk&t=4s&ab_channel=3Blue1Brown
+PLS PLS PLS if you don't understand Neural Networks, watch all his videos!
 
 A YouTube link on installing Tensorflow and Keras in R
 https://www.youtube.com/watch?v=cIUg11mAmK4&t=1s&ab_channel=LiquidBrainBioinformatics
 
-Please note that in order to run Tensorflow via R studio, an older version of Python 3.9 is required.
+Please note that in order to run Tensorflow via R studio, an older version of Python 3.9-3.11 is required. 
 
 Best Regards
 Yubo (yr2001@hw.ac.uk)
