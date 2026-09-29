@@ -1,0 +1,467 @@
+---
+title: "Lab 2: Data wrangling with dplyr"
+subtitle: "F71RA Machine Learning for Risk and Insurance 1"
+format: docx
+editor: visual
+toc: true
+---
+
+## Before you start
+
+Most of the effort in any insurance modelling project goes into getting the data into shape, not into fitting the model. This lab introduces `dplyr`, the standard R toolkit for that job, and then uses it to explore a real motor portfolio of nearly 700,000 policies. The exploratory work you do in Part 2 is exactly what you would do before fitting the claim-frequency models later in the course.
+
+**Learning objectives.** By the end of this lab you should be able to
+
+-   read and write pipelines with the pipe operator, and explain what the pipe does to the first argument of a function;
+-   use `mutate()`, `select()`, `filter()`, `group_by()` + `summarise()` and `arrange()`, and chain them together;
+-   compute exposure-weighted claim frequencies by rating factor and plot them with `ggplot2`;
+-   write small R functions, including one that takes a column name as an argument.
+
+**Packages.** Install anything missing with `install.packages()`.
+
+```{r}
+#| message: false
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(scales)
+```
+
+------------------------------------------------------------------------
+
+## Part 1: Introduction to dplyr
+
+### The pipe operator
+
+We often need to chain several operations together. Suppose we want to compute
+
+$$
+\arctan\big(\sin(\exp(\Gamma(x)))\big) \quad \text{at } x = 1.
+$$
+
+Write this as a single nested expression:
+
+```{r}
+x <- 1
+
+```
+
+This works, but nested calls are read inside-out and it is easy to lose count of the parentheses. In mathematics we would write the composition $\arctan \circ \sin \circ \exp \circ \Gamma$; the R equivalent is the **pipe**. The `magrittr` pipe `%>%` (loaded with `dplyr`) takes whatever is on its left and passes it as the **first argument** of the function on its right, so the same calculation reads left to right:
+
+```{r}
+x %>% gamma() %>% exp() %>% sin() %>% atan()
+```
+
+Read `%>%` as "and then": take `x`, and then apply `gamma`, and then `exp`, and so on. Since R 4.1 there is also a native pipe `|>` built into base R that does the same thing for our purposes:
+
+```{r}
+x |> gamma() |> exp() |> sin() |> atan()
+```
+
+Either is fine in this course; we use `%>%` because it is what you will see in most existing code.
+
+Extra arguments go inside the function call as usual. Confirm that these two lines give the same result:
+
+```{r}
+v <- c(1, 2, 3, NA)
+v %>% max(na.rm = TRUE)
+max(v, na.rm = TRUE)
+```
+
+If you have met method chaining in an object-oriented language (`obj.method1().method2()`), the pipe plays the same role.
+
+### The tidyverse
+
+`dplyr` is one of the `tidyverse` packages, a family of packages that share a design philosophy and work well together (`ggplot2`, `readr` and `tidyr` are others). `dplyr` is built around a handful of *verbs* that each take a data frame and return a data frame, which is what makes them chain together with the pipe. We look at five: `mutate`, `select`, `filter`, `group_by`/`summarise` and `arrange`.
+
+`dplyr` functions return *tibbles*, a lightly modernised data frame that prints more sensibly (only the first ten rows, and only the columns that fit on screen). One difference from base data frames is that tibbles do not carry row names. `mtcars` stores the car model as row names, so:
+
+```{r}
+head(mtcars, 3)
+as_tibble(mtcars) %>% head(3)
+```
+
+**Q1.** What does `library(dplyr, warn.conflicts = FALSE)` do, and why might you want it? Use `?library`.
+
+### mutate: add or change columns
+
+The pattern is `mutate(data, new_column = f(existing_columns))`, where `f` must return a vector of the same length as the data (or length 1, which is recycled). If `new_column` already exists it is overwritten.
+
+To keep the car names when converting `mtcars` to a tibble, put them in a column:
+
+```{r}
+mtcars %>% mutate(model = rownames(mtcars)) %>% head(3)
+```
+
+**Q2.** Replace `=` with `<-` in the line above and run it. What happens to the column name, and why?
+
+```{r}
+
+```
+
+Suppose you suspect `mpg` depends on the square root of `disp`. Create that column and keep only `mpg`, `disp` and the new column for display:
+
+```{r}
+mtcars %>% mutate(root_disp = sqrt(disp)) %>% select(mpg, disp, root_disp) %>% head(3)
+```
+
+`mutate` can create several columns at once, and later ones can use earlier ones:
+
+```{r}
+mtcars %>%
+  mutate(kpl = mpg * 0.425,            # miles per gallon to km per litre
+         kpl_rounded = round(kpl)) %>%
+  select(mpg, kpl, kpl_rounded) %>% head(3)
+```
+
+### select: choose columns
+
+Insurance data sets routinely have dozens of columns, most irrelevant to a given question. `select` keeps only the ones you name:
+
+```{r}
+mtcars %>% select(cyl, disp, hp) %>% head(2)
+```
+
+To drop columns, negate them. Any of the following drops both `cyl` and `am`:
+
+```{r}
+mtcars %>% select(-cyl, -am) %>% names()
+mtcars %>% select(!c(cyl, am)) %>% names()
+mtcars %>% select(-c(cyl, am)) %>% names()
+```
+
+**Q3.** What does `mtcars %>% select(!cyl, !am)` return, and why is it not what you might expect?
+
+```{r}
+mtcars %>% select(!cyl, !am) %>% names()
+```
+
+You can also select by pattern. `starts_with()`, `ends_with()`, `contains()` and `matches()` (regular expressions) are all available; see `?tidyselect::select_helpers`.
+
+```{r}
+iris %>% select(starts_with("Sepal")) %>% head(2)
+```
+
+### filter: choose rows
+
+`filter` keeps the rows for which a logical condition is `TRUE`:
+
+```{r}
+mtcars %>% filter(cyl == 6) %>% nrow()
+```
+
+Multiple conditions can be combined with `&`, `|` and `!`. Because "and" is so common, listing conditions separated by commas is equivalent to joining them with `&`:
+
+```{r}
+mtcars %>% filter(cyl == 6 & mpg > 20)
+mtcars %>% filter(cyl == 6, mpg > 20)
+```
+
+**Q4.** Write a filter that keeps cars with either 4 cylinders or more than 25 mpg. How many are there?
+
+```{r}
+
+```
+
+### group_by and summarise: statistics by group
+
+This is the most important pair of verbs for insurance work, where almost every question is "what is the average of *X* within each level of *Y*?".
+
+**Q5.** What does `::` mean, as in `dplyr::filter`?
+
+The `iris` data has 50 flowers from each of three species. To find the mean sepal length by species we partition the data by `Species` and compute the mean within each part:
+
+```{r}
+iris %>% group_by(Species) %>% summarise(mean_length = mean(Sepal.Length))
+```
+
+`summarise` can compute several statistics at once. `n()` counts the rows in each group:
+
+```{r}
+iris %>% group_by(Species) %>%
+  summarise(n = n(), mean_length = mean(Sepal.Length), max_length = max(Sepal.Length))
+```
+
+Grouping works on numeric columns too, treating each distinct value as a category:
+
+```{r}
+mtcars %>% group_by(cyl) %>% summarise(n = n(), mean_disp = mean(disp))
+```
+
+You can group by more than one column for a finer partition. Here, within each number of cylinders, we separate automatic (`am == 0`) and manual (`am == 1`) cars:
+
+```{r}
+mtcars %>% group_by(cyl, am) %>% summarise(n = n(), mean_disp = mean(disp))
+```
+
+**Q6.** R prints a message: `summarise() has grouped output by 'cyl'. You can override using the .groups argument.` What does this mean, and what does adding `.groups = "drop"` change? Check with `group_vars()`.
+
+```{r}
+by_cyl_am <- mtcars %>% group_by(cyl, am) %>% summarise(mean_disp = mean(disp))
+group_vars(by_cyl_am)
+# now add .groups = "drop" and check again
+
+```
+
+### arrange: sort rows
+
+```{r}
+mtcars %>% arrange(mpg) %>% head(3)          # increasing
+mtcars %>% arrange(desc(mpg)) %>% head(3)    # decreasing
+mtcars %>% arrange(cyl, desc(mpg)) %>% head(3)   # by cyl, then mpg within cyl
+```
+
+**Q7.** Using the verbs above, find the mean `mpg` for each combination of `cyl` and `gear`, and list the combinations from most to least fuel-efficient.
+
+```{r}
+
+```
+
+### Lexical scoping and non-standard evaluation (optional)
+
+This section is optional but explains a behaviour that will eventually bite you.
+
+Inside `mutate`, column names are treated as variables. If a name is *not* a column, R looks outside the data frame for it:
+
+```{r}
+external <- 1:32
+mtcars %>% select(mpg, cyl) %>% mutate(out1 = cyl^2, out2 = external^2) %>% head(3)
+```
+
+This lookup rule is called lexical scoping. It is convenient, but it means that if you also have a variable `cyl` in your workspace, `mutate` will silently use the column and ignore your variable. If you *do* need the outside variable, write `.env$cyl`; if you need to make clear you mean the column, write `.data$cyl`.
+
+Relatedly, some R functions read the *code* you type rather than its value. This is called non-standard evaluation (NSE). `library()` is the classic example: both of these work,
+
+```{r}
+#| eval: false
+library(dplyr)
+library("dplyr")
+```
+
+because `library` captures the unquoted name and converts it to the string `"dplyr"`. So what does this do?
+
+```{r}
+#| eval: false
+dplyr <- "ggplot2"
+library(dplyr)
+```
+
+Which package does it load? Try it and check with `search()`.
+
+------------------------------------------------------------------------
+
+## Part 2: Case study — French motor third-party liability
+
+`freMTPL2freq` records one year of experience for 678,013 French motor third-party liability policies. Each row is a policy; the variables are
+
+| Variable     | Description                                                                          |
+|--------------|--------------------------------------------------------------------------------------|
+| `IDpol`      | Policy identifier                                                                    |
+| `ClaimNb`    | Number of claims during the exposure period (the response)                           |
+| `Exposure`   | Length of the exposure period, in years                                              |
+| `Area`       | Area code, A (rural) to F (urban centre)                                             |
+| `VehPower`   | Power of the car (ordered categories 4–15)                                           |
+| `VehAge`     | Age of the vehicle, years                                                            |
+| `DrivAge`    | Age of the driver, years                                                             |
+| `BonusMalus` | Bonus/malus level, 50–350. Below 100 is a bonus (no-claims discount), above 100 a malus |
+| `VehBrand`   | Car brand (unordered categories B1–B14)                                              |
+| `VehGas`     | Fuel type, Diesel or Regular                                                         |
+| `Density`    | Population density of the driver's home town, inhabitants per km²                    |
+| `Region`     | French region                                                                        |
+
+Download `freMTPL2freq.csv` from the [course GitHub page](https://github.com/yubae-bit/F71RA) and save it in the same folder as this notebook. Read it in with `readr::read_csv()` (type `?read_csv` for the documentation):
+
+```{r}
+#| message: false
+dat <- read_csv("freMTPL2freq.csv")
+```
+
+Take a first look with `glimpse()`, the `dplyr` equivalent of `str()`:
+
+```{r}
+glimpse(dat)
+```
+
+### Task 1: Factors
+
+`VehGas`, `VehBrand`, `Area` and `Region` are stored as character columns. For modelling they need to be *factors*: a vector of integer codes plus a set of labels, so that R knows the values are categories rather than free text. Use `mutate` with `factor()` to convert `VehGas`, and then `across()` to convert all four in one call. Check the result with `levels()`.
+
+```{r}
+dat <- dat %>% mutate(VehGas = )
+levels(dat$VehGas)
+
+# all four at once with across()
+dat <- dat %>% mutate(across(c( ), ))
+```
+
+### Task 2: Capping
+
+A few policies report an implausibly large number of claims, and some have `Exposure` above one year. These may be bulk or fleet policies. A crude fix, used in the published analyses of this data, is to cap `ClaimNb` at 4 and `Exposure` at 1. Before capping, count how many rows each cap will affect. *Hint: `pmin()`.*
+
+```{r}
+# how many rows will each cap affect?
+
+# apply the caps
+dat <- dat %>% mutate(ClaimNb = , Exposure = )
+```
+
+### Task 3: Log exposure
+
+Create a column `log_exposure`. Why might we want this? *Hint: think about how a Poisson regression for claim counts should depend on exposure.*
+
+```{r}
+
+```
+
+### Task 4: Recoding Area
+
+Create a numeric column `Area_num` with A = 1, B = 2, and so on. Do it two ways: by writing a small function and using it inside `mutate`, and by using `as.integer()` on the factor. Confirm they agree.
+
+```{r}
+area_to_num <- function(a) {
+
+}
+dat <- dat %>% mutate(Area_num = )
+```
+
+### Task 5: The distribution of claim counts
+
+Draw a bar chart of `ClaimNb` with `ggplot2`. The y-axis labels will appear as `0e+00`, `2e+05` and so on; fix them so that they read `0`, `200,000`, … *Hint: `scales::label_comma()`, or `?scale_y_continuous`.* Then compute the proportion of policies with no claims and check it against the 94.98% quoted for this data set.
+
+```{r}
+ggplot(dat, aes(x = factor(ClaimNb))) +
+  geom_bar() +
+  scale_y_continuous(labels = ) +
+  labs(x = , y = )
+
+# proportion with no claims
+
+```
+
+### Task 6: Empirical claim frequency by rating factor
+
+For pricing, the quantity of interest is not the raw count but the **claim frequency per unit of exposure**. The overall empirical frequency is
+
+$$
+\hat\lambda = \frac{\sum_i \text{ClaimNb}_i}{\sum_i \text{Exposure}_i},
+$$
+
+and the same formula within each level of a rating factor tells us how risky that level is.
+
+**(a)** Compute the overall frequency, then the frequency by `Area` using `group_by` and `summarise`. Also record the total exposure in each group, since a frequency based on little exposure is unreliable.
+
+```{r}
+# overall
+dat %>% summarise(claims = , exposure = , frequency = )
+
+# by Area
+
+```
+
+**(b)** You are about to do the same thing for every rating factor, so write a function `freq_by(data, var)` that returns the table for any column. Inside a `dplyr` verb, a column name passed as a function argument must be wrapped in double braces, `{{ var }}`, so that `dplyr` knows to look for a column rather than a variable. Test it on `VehGas`.
+
+```{r}
+freq_by <- function(data, var) {
+  data %>%
+    group_by({{ var }}) %>%
+    summarise( , .groups = "drop")
+}
+freq_by(dat, VehGas)
+```
+
+**(c)** `DrivAge`, `VehAge`, `BonusMalus` and `Density` are continuous, so grouping by their raw values gives too many tiny groups. Use `cut()` inside `mutate` to band them. Suggested bands: driver age at 18, 21, 26, 31, 41, 51, 71, 100; vehicle age at 0, 1, 2, 5, 10, 100; bonus–malus at 50, 60, 80, 100, 150, 350; density on the log scale, `cut(log(Density), 8)`. Then use `freq_by()` on each banded column.
+
+```{r}
+dat <- dat %>% mutate(
+  DrivAge_band    = cut(DrivAge, c(18, 21, 26, 31, 41, 51, 71, 101), right = FALSE),
+  VehAge_band     = ,
+  BonusMalus_band = ,
+  Density_band    = 
+)
+```
+
+**(d)** Write a second function `plot_freq(data, var)` that draws the frequency by band as points joined by a line, with the size of the points proportional to exposure. Use it on the four banded variables and on `Area` and `VehPower`.
+
+```{r}
+plot_freq <- function(data, var) {
+  freq_by(data, {{ var }}) %>%
+    ggplot(aes(x = {{ var }}, y = frequency, group = 1)) +
+    geom_line() +
+    geom_point(aes(size = )) +
+    labs(y = "Claims per exposure-year")
+}
+```
+
+### Task 7: Interactions
+
+Two rating factors *interact* if the effect of one depends on the level of the other. In a frequency plot, that shows up as lines that are not parallel.
+
+Extend `freq_by()` so that it takes two grouping variables, then plot frequency by `DrivAge_band` with one line per `VehGas`. Do the same for `DrivAge_band` and `Area`. Do you see an interaction?
+
+```{r}
+freq_by2 <- function(data, var1, var2) {
+
+}
+
+```
+
+### Stretch: putting it together
+
+Using only `dplyr` verbs, produce a table of the ten regions with the highest claim frequency among regions with at least 5,000 exposure-years, showing the number of policies, total exposure and frequency, sorted from highest to lowest.
+
+```{r}
+
+```
+
+------------------------------------------------------------------------
+
+## Part 3: Writing functions in R
+
+These exercises practise writing functions from scratch. Each should be a single function definition followed by a line or two that calls it.
+
+**1.** Write `choose.members(n, c, p)` that returns the number of ways to choose, from an organisation of $p$ people, an executive committee of $n$ *named* positions (president, treasurer, …) and $c$ at-large members of equal rank. For example, `choose.members(2, 3, 10)` should return `5040`. *Hint: `choose()` and `factorial()`; look at their help pages first.*
+
+```{r}
+choose.members <- function(n, c, p) {
+
+}
+choose.members(2, 3, 10)
+```
+
+**2.** Write `number.sequence(n)` that returns the first $n$ terms of the sequence $2^2 \cdot 3,\; 3^2 \cdot 5,\; 4^2 \cdot 7,\; 5^2 \cdot 9,\; \dots$ so that `number.sequence(4)` returns `12 45 112 225`.
+
+```{r}
+number.sequence <- function(n) {
+
+}
+number.sequence(4)
+```
+
+**3.** Write `is.even(n)` which returns `TRUE` when $n$ is even and `FALSE` otherwise, then use it to write `evens.in(v)` which returns the even integers in a vector `v`. `evens.in(c(3, 8, 11, 14, 20, 7))` should return `8 14 20`.
+
+```{r}
+is.even <- function(n) {
+
+}
+evens.in <- function(v) {
+
+}
+evens.in(c(3, 8, 11, 14, 20, 7))
+```
+
+**4.** The consecutive differences of $x_1, x_2, x_3, \dots$ are $x_2 - x_1,\; x_3 - x_2,\; \dots$. Write `consecutive.differences(v)`, first using vector indexing, then check your answer against the built-in `diff()`.
+
+```{r}
+consecutive.differences <- function(v) {
+
+}
+```
+
+**5.** Write `histogram.for.simulated.uniform.data(n, num.bars)` that simulates $n$ values from a Uniform(0, 1) distribution and plots a histogram with exactly `num.bars` bars. *Hint: `runif()`, and read the `breaks` argument of `hist()` carefully: a single number is only a suggestion, but a vector of breakpoints is used exactly.*
+
+```{r}
+histogram.for.simulated.uniform.data <- function(n, num.bars) {
+
+}
+histogram.for.simulated.uniform.data(100, 5)
+```
