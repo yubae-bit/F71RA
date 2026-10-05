@@ -1,0 +1,407 @@
+---
+title: "Lab 3: Factors and regression"
+subtitle: "F71RA Machine Learning for Risk and Insurance 1"
+author: "Yubo Rasmussen"
+format: docx
+editor: visual
+toc: true
+---
+
+## Before you start
+
+This lab has three parts. Part 1 covers *factors*, R's data type for categorical variables, using the `forcats` package. Part 2 revisits linear regression on a small data set, with a focus on reading the output critically and checking the model's assumptions. Part 3 brings both together on the French MTPL data from Lab 2, where we will see why linear regression is the wrong tool for claim counts, fit our first Poisson GLM, and find out that even the "right" model can rest on an assumption the data do not support.
+
+**Learning objectives.** By the end of this lab you should be able to
+
+-   create factors with a chosen level order, and use `forcats` to lump, reorder and relevel them;
+-   interpret the coefficients, standard errors and significance codes of a fitted `lm()`, and explain why a predictor can matter on its own but not in a multiple regression;
+-   use residual plots, QQ plots and $R^2$ to judge a fitted model;
+-   fit a Poisson GLM with an exposure offset in `gamlss`, interpret its coefficients as multiplicative effects, and compare models on held-out data.
+
+**Packages.** Install anything missing with `install.packages()`. We load `gamlss` *before* the tidyverse on purpose: `gamlss` attaches the `MASS` package, which has its own `select()` function. Loading the tidyverse second means `select()` refers to `dplyr::select()`, which is the one we want.
+
+```{r}
+#| message: false
+#| warning: false
+library(gamlss)
+library(tidyverse)   # loads dplyr, ggplot2, forcats, readr and others
+```
+
+------------------------------------------------------------------------
+
+## Part 1: Factors
+
+### Why factors?
+
+Here is a vector of month abbreviations that we would like to put in calendar order:
+
+```{r}
+x1 <- c("Dec", "Apr", "Jan", "Mar")
+sort(x1)
+```
+
+`sort()` orders character strings alphabetically, which is not what we want. The fix is to tell R that these values come from a fixed, ordered set of categories, by turning the vector into a **factor** with the levels in the order we want.
+
+```{r}
+month_levels <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+y1 <- factor(x1, levels = month_levels)
+y1
+sort(y1)
+levels(y1)
+```
+
+**Q1.** Suppose one entry is mistyped as `"Jam"`. What does `factor()` do with it? Now try `forcats::fct()` instead. Which behaviour would you prefer when cleaning a large insurance data set, and why?
+
+```{r}
+#| error: true
+x2 <- c("Dec", "Apr", "Jam", "Mar")
+factor(x2, levels = month_levels)
+fct(x2, levels = month_levels)
+```
+
+### Working with factors: the Star Wars data
+
+`dplyr` ships with a small data set, `starwars`, describing 87 characters. We use it to practise the main `forcats` functions. (You may see older code that runs `attach(starwars)` first. Avoid this: it puts the columns into your search path, where they can clash with other objects of the same name, and every function we use here takes the data frame explicitly anyway.)
+
+How many characters are there of each species? `count()` is shorthand for `group_by()` followed by `summarise(n = n())`.
+
+```{r}
+starwars %>%
+  filter(!is.na(species)) %>%
+  count(species, sort = TRUE)
+```
+
+Most species appear only once or twice. For a summary, and later for modelling, it often makes sense to *lump* rare categories into a single "Other" level.
+
+**Q2.** We want to keep every species that appears at least 3 times and lump the rest. Compare `fct_lump(species, n = 3)` with `fct_lump_min(species, min = 3)`. What does each one do, and which matches what we asked for?
+
+```{r}
+starwars %>%
+  filter(!is.na(species)) %>%
+  mutate(species = fct_lump_min(species, min = )) %>%
+  count(species, sort = TRUE)
+
+# now try fct_lump(species, n = 3)
+
+```
+
+Now plot the number of characters with each eye colour:
+
+```{r}
+ggplot(starwars, aes(y = eye_color)) +
+  geom_bar() +
+  labs(x = "Number of characters", y = "Eye colour")
+```
+
+The bars are in alphabetical order, which makes the chart hard to read. `fct_infreq()` reorders the levels by frequency:
+
+```{r}
+starwars %>%
+  mutate(eye_color = fct_infreq(eye_color)) %>%
+  ggplot(aes(y = eye_color)) +
+  geom_bar() +
+  labs(x = "Number of characters", y = "Eye colour")
+```
+
+**Q3.** In the plot above the most common colour is at the *bottom*. Why? Fix it so that the most common colour is at the top.
+
+```{r}
+starwars %>%
+  mutate(eye_color = ) %>%
+  ggplot(aes(y = eye_color)) +
+  geom_bar() +
+  labs(x = "Number of characters", y = "Eye colour")
+```
+
+Next, the average mass of characters by eye colour:
+
+```{r}
+starwars %>%
+  filter(!is.na(mass)) %>%
+  group_by(eye_color) %>%
+  summarise(average_mass = mean(mass), n = n()) %>%
+  ggplot(aes(x = average_mass, y = eye_color)) +
+  geom_point() +
+  labs(x = "Average mass (kg)", y = "Eye colour")
+```
+
+As before, the plot is easier to read if the levels are sorted, this time by the value being plotted. `fct_reorder(f, x)` reorders the levels of `f` by the values of `x`:
+
+```{r}
+starwars %>%
+  filter(!is.na(mass)) %>%
+  group_by(eye_color) %>%
+  summarise(average_mass = mean(mass), n = n()) %>%
+  ggplot(aes(x = average_mass, y = fct_reorder(eye_color, average_mass))) +
+  geom_point(aes(size = n)) +
+  labs(x = "Average mass (kg)", y = "Eye colour", size = "Characters")
+```
+
+**Q4.** One eye colour has an average mass far above the rest. How many characters is that average based on, and which character is responsible for it? What does this have in common with the frequency tables in Lab 2?
+
+```{r}
+starwars %>%
+  filter(!is.na(mass)) %>%
+  group_by(eye_color) %>%
+  summarise(average_mass = mean(mass), n = n()) %>%
+  arrange( )
+
+```
+
+### Factors in regression: the reference level
+
+When a factor enters a regression, R creates one dummy variable per level *except the first*, which becomes the **reference level**. Every other level's coefficient is a difference relative to it. By default the reference is simply the first level alphabetically, which is rarely a meaningful choice. A common actuarial convention is to use the level with the most data as the reference, so that the other coefficients are measured against a well-estimated baseline.
+
+**Q5.** In `mtcars`, `cyl` takes the values 4, 6 and 8. Fit `lm(mpg ~ factor(cyl))`, then refit it with 8 cylinders as the reference level using `fct_relevel()`. Explain how the coefficients change and what stays the same.
+
+```{r}
+coef(lm(mpg ~ factor(cyl), data = mtcars))
+
+mtcars_rl <- mtcars %>% mutate(cyl = fct_relevel( ))
+
+```
+
+------------------------------------------------------------------------
+
+## Part 2: Linear regression
+
+### The model
+
+Linear regression predicts a response $Y$ from $p$ explanatory variables $x_1, \dots, x_p$. For observations $i = 1, \dots, n$ the model is
+
+$$
+Y_i = \beta_0 + \beta_1 x_{i1} + \beta_2 x_{i2} + \cdots + \beta_p x_{ip} + \varepsilon_i,
+\qquad \varepsilon_i \overset{\text{iid}}{\sim} N(0, \sigma^2).
+$$
+
+In matrix form, $\mathbf{Y} = \mathbf{X}\boldsymbol\beta + \boldsymbol\varepsilon$, and the least-squares estimate is $\hat{\boldsymbol\beta} = (\mathbf{X}^\top\mathbf{X})^{-1}\mathbf{X}^\top\mathbf{Y}$, which you computed by hand at the end of Lab 1. In R the model is fitted with `lm()`.
+
+We use the built-in `mtcars` data (type `?mtcars` for a description) and model fuel efficiency, `mpg` (miles per US gallon), using
+
+-   `cyl`, number of cylinders,
+-   `hp`, gross horsepower,
+-   `wt`, weight in thousands of pounds.
+
+```{r}
+head(mtcars)
+LM <- lm(mpg ~ cyl + hp + wt, data = mtcars)
+summary(LM)
+```
+
+The fitted model is
+
+$$
+\widehat{\texttt{mpg}} = 38.75 - 0.942\,\texttt{cyl} - 0.0180\,\texttt{hp} - 3.17\,\texttt{wt}.
+$$
+
+**Q6.** Interpret the coefficient on `wt` in plain language. Then say what the `Std. Error`, `t value` and `Pr(>|t|)` columns, and the significance codes, tell you about each coefficient.
+
+**Q7.** Now fit `mpg ~ cyl` on its own. Is `cyl` significant? How can it be highly significant here but not in the model above? *Hint: look at* `cor(mtcars[, c("cyl", "hp", "wt")])`.
+
+```{r}
+
+```
+
+**Q8.** Copy the `summary(LM)` output into ChatGPT (or another AI assistant) and ask it to interpret the results. One such tool gave this summary:
+
+> "Heavier cars with more cylinders and higher horsepower generally use more fuel. But in this model, weight is the key factor driving mpg differences."
+
+Do you agree? Identify anything that is overstated or that the model cannot support.
+
+### Residuals
+
+The residuals $e_i = y_i - \hat y_i$ are our estimates of the errors $\varepsilon_i$. If the model is adequate they should look like independent draws from $N(0, \sigma^2)$: centred on zero, with constant spread, and with no pattern when plotted against the fitted values. `residuals()` extracts them; `fitted()` extracts $\hat y_i$.
+
+```{r}
+res <- residuals(LM)
+summary(res)
+
+par(mfrow = c(1, 2))
+plot(fitted(LM), res, xlab = "Fitted values", ylab = "Residuals",
+     main = "Residuals vs fitted")
+abline(h = 0, col = "red", lty = 2)
+qqnorm(res, main = "Normal QQ plot of residuals")
+qqline(res, col = "red", lty = 2)
+par(mfrow = c(1, 1))
+```
+
+The QQ plot compares the sorted residuals with the quantiles you would expect from a normal sample of the same size. If the residuals are normal the points lie close to the straight line; curvature at the ends indicates skewness or heavy tails. (R's built-in `plot(LM)` produces these and two further diagnostic plots in one call.)
+
+**Q9.** Is there any pattern in the residuals-versus-fitted plot? Do the residuals look normal? How much weight would you put on these conclusions with $n = 32$?
+
+### Goodness of fit
+
+$R^2$ is the proportion of the variability in $Y$ explained by the model; adjusted $R^2$, $\bar R^2$, adds a penalty for the number of predictors $p$:
+
+$$
+R^2 = 1 - \frac{\sum_i (y_i - \hat y_i)^2}{\sum_i (y_i - \bar y)^2},
+\qquad
+\bar R^2 = 1 - (1 - R^2)\,\frac{n - 1}{n - p - 1}.
+$$
+
+**Q10.** Compute $R^2$ and $\bar R^2$ for `LM` from the formulas and check them against `summary(LM)`. Then add a column of pure noise, `noise = rnorm(32)`, to the model. What happens to each?
+
+```{r}
+y <- mtcars$mpg
+n <- nrow(mtcars); p <- 3
+R2 <- 
+R2_adj <- 
+
+set.seed(3)
+mtcars_noise <- mtcars %>% mutate(noise = rnorm(n()))
+
+```
+
+------------------------------------------------------------------------
+
+## Part 3: Case study — modelling claim counts
+
+We return to the French MTPL data from Lab 2. The response is now `ClaimNb`, the number of claims on each policy. Make sure `freMTPL2freq.csv` (from the course GitHub page) is in the same folder as this notebook.
+
+### Task 1: Load and prepare the data
+
+Load the data and apply the same caps as in Lab 2 (`ClaimNb` at 4, `Exposure` at 1). Then convert `Area`, `VehPower`, `VehGas`, `VehBrand` and `Region` to factors. Following the convention from Part 1, use `fct_infreq()` so that each factor's reference level is its most common level. Check the reference levels.
+
+```{r}
+#| message: false
+dat <- read_csv("freMTPL2freq.csv") %>%
+  mutate(ClaimNb  = ,
+         Exposure = ,
+         across(c(Area, VehPower, VehGas, VehBrand, Region),
+                ~ fct_infreq(factor(.x))))
+
+# check the first level of each factor
+
+```
+
+### Task 2: A linear regression for claim counts
+
+Fit a linear regression of `ClaimNb` on all the rating factors, with `log(Density)` in place of `Density`. Look at $R^2$, then answer:
+
+1.  How many policies have a *negative* fitted number of claims?
+2.  Does the model take account of `Exposure`? Should it?
+
+```{r}
+form <- ClaimNb ~ Area + VehPower + VehGas + VehBrand + Region +
+  log(Density) + VehAge + DrivAge + BonusMalus
+
+model1 <- lm(form, data = dat)
+
+```
+
+### Task 3: Residual analysis for the linear model
+
+Plot the residuals against the fitted values, a histogram of the residuals and a normal QQ plot. Use `pch = "."` in `plot()` to keep the scatter plot readable with 678,000 points. Explain what you see.
+
+```{r}
+res1 <- residuals(model1)
+
+par(mfrow = c(1, 3))
+# residuals vs fitted, histogram, QQ plot
+
+par(mfrow = c(1, 1))
+```
+
+### Task 4: A Poisson GLM
+
+A natural model for claim counts is the **Poisson regression**:
+
+$$
+N_i \sim \text{Poisson}(\mu_i), \qquad
+\log \mu_i = \log(\text{Exposure}_i) + \beta_0 + \beta_1 x_{i1} + \cdots + \beta_p x_{ip}.
+$$
+
+The log link guarantees $\mu_i > 0$, and the term $\log(\text{Exposure}_i)$, which has its coefficient fixed at 1, is the **offset** from Lab 2, Task 3. It makes the expected number of claims proportional to exposure: $\mu_i = \text{Exposure}_i \times \lambda(x_i)$, where $\lambda(x_i) = \exp(\beta_0 + \boldsymbol\beta^\top x_i)$ is the annual claim frequency.
+
+Fit this model with `gamlss(..., family = PO)` on a random 10% of the data, keeping the other 90% aside as a **test set** for Task 6. Use `set.seed(2026)` so your split matches the solutions. Print the coefficients with `summary(model2, type = "qr")`, which is much faster than the default for a model of this size.
+
+```{r}
+set.seed(2026)
+train_idx <- sample(nrow(dat), size = round(0.1 * nrow(dat)))
+train <- dat[train_idx, ]
+test  <- dat[-train_idx, ]
+
+model2 <- gamlss(update(form, . ~ . + offset(log(Exposure))),
+                 family = , data = , trace = FALSE)
+
+```
+
+**Q11.** Coefficients in a log-link model act *multiplicatively*: increasing $x_j$ by one unit multiplies the expected frequency by $e^{\beta_j}$. Compute $e^{\hat\beta}$ for `BonusMalus`, `VehAge` and `DrivAge`, and interpret each in words.
+
+```{r}
+
+```
+
+It is worth knowing that `gamlss` with the `PO` family fits exactly the same model as base R's `glm(..., family = poisson)`. `gamlss` becomes essential when we also want to model the *variance* or other parameters of the distribution, which we will do later in the course.
+
+```{r}
+model2_glm <- glm(form, offset = log(Exposure), family = poisson, data = train)
+max(abs(coef(model2) - coef(model2_glm)))
+```
+
+### Task 5: Residual analysis for the Poisson model
+
+For a discrete response, ordinary residuals $y_i - \hat\mu_i$ show the same banding we saw in Task 3 however good the model is. `gamlss` instead returns **normalised randomised quantile residuals**. For each observation, it finds where $y_i$ falls in its own fitted distribution, $F(y_i; \hat\mu_i)$, adds a small random jitter to smooth over the discreteness, and maps the result through the standard normal quantile function $\Phi^{-1}$. If the model is correct, these residuals are exactly standard normal, whatever the response distribution.
+
+Produce the same plots as in Task 3 for `residuals(model2)` and compare.
+
+```{r}
+res2 <- residuals(model2)
+
+```
+
+### Task 6: Which model predicts better?
+
+Residual plots tell us whether a model's assumptions look reasonable; they do not tell us directly which model makes better *predictions*. For that we use the test set. A natural measure for count data is the mean **Poisson deviance**,
+
+$$
+D = \frac{2}{n} \sum_{i=1}^{n} \left[ y_i \log\frac{y_i}{\hat\mu_i} - (y_i - \hat\mu_i) \right],
+$$
+
+where the first term is taken as zero when $y_i = 0$. Lower is better. It penalises predictions that are too low for policies that did claim, and it requires $\hat\mu_i > 0$, so the function below floors predictions at a small positive value to allow the linear model to be scored.
+
+Refit the linear model on `train` (so both models see the same data) and compare the two on `test`. Include a "null" model that predicts the same number of claims, the training mean, for every policy.
+
+```{r}
+poisson_deviance <- function(y, mu) {
+  mu <- pmax(mu, 1e-6)
+  2 * mean(ifelse(y == 0, 0, y * log(y / mu)) - (y - mu))
+}
+
+model1_train <- lm(form, data = train)
+pred_lm   <- predict(model1_train, newdata = test)
+pred_pois <- predict(model2, newdata = test, type = "response", data = train)
+pred_null <- 
+
+```
+
+**Q12.** Which model has the lowest test deviance? Is that what you expected after Task 5?
+
+### Task 7: Investigating the surprise
+
+The one structural assumption the Poisson model makes that the linear model does not is the offset: expected claims are *proportional* to exposure. Check it directly.
+
+**(a)** Band `Exposure` into $(0, 0.1]$, $(0.1, 0.25]$, $(0.25, 0.5]$, $(0.5, 0.75]$, $(0.75, 0.99]$ and $(0.99, 1]$, and compute for each band the number of policies, the average number of claims per policy, and the claim frequency (claims divided by exposure). If claims were proportional to exposure, what should the frequency column look like?
+
+```{r}
+dat %>%
+  mutate(exposure_band = cut(Exposure, c(0, 0.1, 0.25, 0.5, 0.75, 0.99, 1))) %>%
+  group_by(exposure_band) %>%
+  summarise( )
+```
+
+**(b)** Instead of fixing the coefficient of $\log(\text{Exposure})$ at 1, let the model estimate it: include `log(Exposure)` as an ordinary predictor. What is its estimated coefficient? Compare the test deviance of this model with the others.
+
+```{r}
+model3 <- gamlss( , family = PO, data = train, trace = FALSE)
+
+```
+
+### Stretch
+
+Lab 2 showed that claim frequency is far from linear in driver age. Replace `DrivAge` in `model3` with the banded version from Lab 2, `cut(DrivAge, c(18, 21, 26, 31, 41, 51, 71, 101), right = FALSE)`, refit, and compare the test deviance. Do the fitted band coefficients reproduce the pattern you saw in the Lab 2 frequency plot?
+
+```{r}
+
+```
