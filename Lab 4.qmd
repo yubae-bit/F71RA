@@ -1,0 +1,379 @@
+---
+title: "Lab 4: Principal Component Analysis"
+subtitle: "F71RA Machine Learning for Risk and Insurance 1"
+author: "Yubo Rasmussen"
+format: docx
+editor: visual
+toc: true
+---
+
+## Before you start
+
+This lab introduces **principal component analysis (PCA)**, our first *unsupervised* learning method: there is no response variable, and the aim is to describe the structure of a set of correlated variables with fewer, uncorrelated ones. Part 1 runs PCA on the `mtcars` data and asks what the summary output means. Part 2 interprets the loadings and scores and visualises them in a biplot. Part 3 rebuilds PCA from scratch with matrix algebra from Lab 1, so that nothing `princomp()` does is a black box. Part 4 applies PCA to a real actuarial question: given a car's technical specification, is it a sports car?
+
+**Learning objectives.** By the end of this lab you should be able to
+
+-   explain why variables are usually standardised before PCA, and what goes wrong if they are not;
+-   run `princomp()` and interpret the standard deviations, proportions of variance, loadings and scores it returns;
+-   choose a number of components using a scree plot and the eigenvalue-greater-than-one rule;
+-   draw and interpret a biplot with `ggbiplot`, including colouring observations by group;
+-   reproduce `princomp()` with `eigen()` and `svd()`, and explain why signs and scaling can differ between implementations;
+-   use PCA to build a single data-driven rating variable from several correlated vehicle characteristics.
+
+**Packages.** Install anything missing with `install.packages()`. `ggbiplot` used to be available only on GitHub, so older notes install it with `devtools::install_github("vqv/ggbiplot")`. It is now on CRAN, so a normal `install.packages("ggbiplot")` is all you need.
+
+```{r}
+#| eval: false
+install.packages(c("tidyverse", "ggbiplot"))
+```
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)   # loads dplyr, ggplot2, readr and others
+library(ggbiplot)
+```
+
+------------------------------------------------------------------------
+
+## Part 1: PCA on `mtcars`
+
+### The data
+
+We use the built-in `mtcars` data set, which records 11 characteristics of 32 cars from the 1974 *Motor Trend* magazine: miles per US gallon (`mpg`), number of cylinders (`cyl`), engine displacement in cubic inches (`disp`), gross horsepower (`hp`), and so on. Type `?mtcars` for the full list. Use `head()` to look at the first few rows:
+
+```{r}
+
+```
+
+Two columns are categorical even though they look numeric: `vs` (engine shape: 0 = V-shaped, 1 = straight) and `am` (transmission: 0 = automatic, 1 = manual). PCA is built on variances and correlations, which only make sense for numeric measurements. A 0/1 code is just a label, so we remove these two columns.
+
+A general warning: many data sets code categorical variables as numbers. Always check what each column *means* before you feed it to a method.
+
+Use `dplyr::select()` to remove `vs` and `am`. Store the result under a new name, `mtcars_cont`, so that the original `mtcars` is left untouched.
+
+```{r}
+mtcars_cont <- mtcars %>% select( )
+names(mtcars_cont)
+```
+
+**Q1.** Remove `vs` and `am` again using base R only, without `dplyr`. *Hint: see* `?which` *and* `?%in%`. Then run your code with a column name that does *not* exist, for example `c("vs", "am", "colour")`, and also with *only* names that do not exist, for example `c("colour")`. What happens in each case? What does this tell you about the `-which()` idiom?
+
+```{r}
+drop <- c("vs", "am")
+
+# Option 1: negative indexing with which()
+mtcars_base1 <-
+
+# Option 2: logical indexing
+mtcars_base2 <-
+
+identical(mtcars_base1, mtcars_cont)
+
+```
+
+Note: R begins indexing at 1, not 0.
+
+### Why standardise?
+
+PCA looks for the directions in which the data vary the most. If the variables are measured in different units, "vary the most" depends on those units. `princomp()` works on the covariance matrix by default. Setting `cor = TRUE` makes it work on the correlation matrix instead, which is the same as standardising every variable to mean 0 and variance 1 first.
+
+**Q2.** Run `princomp()` on `mtcars_cont` *without* `cor = TRUE`, and look at the variances of the original columns. Which variable(s) dominate the first component, and why? Would you trust this analysis?
+
+```{r}
+pca_unscaled <- princomp(mtcars_cont)
+summary(pca_unscaled)
+round(unclass(pca_unscaled$loadings)[, 1:2], 3)
+
+# variance of each column
+
+```
+
+### PCA with `princomp()`
+
+Now run the standardised PCA and store it as `mtcars_pca`. The function `summary()` displays the components ranked by the proportion of variance they capture.
+
+```{r}
+mtcars_pca <- princomp( )
+
+```
+
+Each **component** `Comp.1`, ..., `Comp.9` is a new variable: a weighted sum of the nine standardised original variables. The weights are chosen so that `Comp.1` has the largest possible variance, `Comp.2` has the largest possible variance while being uncorrelated with `Comp.1`, and so on. There are as many components as original variables. Together they hold exactly the same information, just rotated.
+
+**Q3.** Explain to a non-technical colleague, such as an underwriting manager, what the summary table tells us. What are `Comp.1` to `Comp.9`, and what do the rows `Standard deviation`, `Proportion of Variance` and `Cumulative Proportion` mean? *Hint: what is the total variance of nine standardised variables?*
+
+### How many components?
+
+A **scree plot** shows the variance of each component in order. A common heuristic, the *elbow rule*, is to keep the components before the curve flattens out. A second heuristic, *Kaiser's rule*, is to keep components whose variance (eigenvalue) is greater than 1, i.e. those that explain more than one original variable's worth.
+
+Complete the code below to draw a scree plot with a dashed line at 1.
+
+```{r}
+scree <- tibble(component = 1:length(mtcars_pca$sdev),
+                variance  = ,
+                prop      = variance / sum(variance))
+
+ggplot(scree, aes(x = component, y = variance)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = , linetype = "dashed", colour = "red") +
+  scale_x_continuous(breaks = scree$component) +
+  labs(x = "Component", y = "Variance (eigenvalue)",
+       title = "Scree plot, mtcars")
+```
+
+(Base R has a one-line version: `screeplot(mtcars_pca, type = "lines")`.)
+
+**Q4.** How many components would you keep according to (a) the elbow rule and (b) Kaiser's rule? Do they agree?
+
+------------------------------------------------------------------------
+
+## Part 2: Loadings, scores and biplots
+
+### What does `princomp()` return?
+
+The output of `princomp()` is a **list**. Which function would you use to quickly view its elements? Use it below.
+
+```{r}
+
+```
+
+**Q5.** We asked ChatGPT to *"Explain to a lay person what each of the 7 outputs above means."* Here is what it said. Check each description against the documentation (`?princomp`) and say which are correct, which are misleading, and how you would rewrite the misleading ones.
+
+> 1.  **`sdev`**: "These are like the speedometers for each trait of the cars, showing how much the models differ for specific characteristics. A higher 'speed' means that a characteristic varies significantly among the car models."
+> 2.  **`loadings`**: "Loadings are like the contribution of each car part to its overall performance. Loadings help us understand the weight of each feature in the components."
+> 3.  **`center`**: "Think of the center as the 'average car' in our dataset. It represents the baseline from which we measure and compare the other cars."
+> 4.  **`scale`**: "The scale is like the measuring tape we use. It ensures that we fairly compare all cars regardless of their original units."
+> 5.  **`n.obs`**: "This is the total number of car models we examined in our dataset."
+> 6.  **`scores`**: "Scores are like individual performance reports for each car, based on the traits we've identified. It tells us how each car model performs concerning each trait."
+> 7.  **`call`**: "This is the specific command we used to generate this analysis. It helps anyone who reads the report understand how the analysis was conducted."
+
+*Hint for `scale`: compare* `mtcars_pca$scale` *with* `sapply(mtcars_cont, sd)`.
+
+### Interpreting the loadings
+
+```{r}
+round(unclass(mtcars_pca$loadings)[, 1:3], 3)
+```
+
+**Q6.** Using the loadings, describe in words what `Comp.1` and `Comp.2` measure. Which original variables have the largest (absolute) weights on each?
+
+### Biplots
+
+A **biplot** shows two things at once. The points are the scores of each car on two components (here `Comp.1` and `Comp.2`). The arrows show the loadings of each original variable on those two components. Arrows pointing in a similar direction belong to positively correlated variables. A car lies towards the arrows of the variables on which it scores highly.
+
+Create a biplot by calling `ggbiplot()` on `mtcars_pca`, and display the name of each car using the `labels` argument.
+
+```{r}
+ggbiplot(mtcars_pca, labels = , labels.size = 3)
+```
+
+**Q7.** The default figure is small and the labels overlap. Make it larger in the rendered document, and save a copy to file with specified dimensions. *Hint: look up the Quarto chunk options* `fig-width` *and* `fig-height`*, and the function* `ggsave()`.
+
+```{r}
+p_biplot <- ggbiplot(mtcars_pca, labels = rownames(mtcars_cont), labels.size = 3) +
+  labs(title = "PCA biplot, mtcars") +
+  theme_minimal()
+p_biplot
+
+```
+
+### Do cars from the same region look alike?
+
+A reasonable guess is that cars made in the same region share similar properties, because manufacturers design for their home market. We can look for evidence by colouring each car in the biplot by its region of origin. The vector below lists the regions in the same order as the rows of `mtcars`. Always check a hand-typed vector like this against the row names:
+
+```{r}
+mtcars_country <- c(rep("Japan", 3), rep("US", 4), rep("Europe", 7),
+                    rep("US", 3), "Europe", rep("Japan", 3), rep("US", 4),
+                    rep("Europe", 3), "US", rep("Europe", 3))
+
+tibble(car = rownames(mtcars_cont), country = mtcars_country) %>%
+  print(n = 32)
+```
+
+The `groups` argument of `ggbiplot()` colours each group differently, and `ellipse = TRUE` draws an ellipse around each group, which makes clusters easier to see. Add both below.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 8
+ggbiplot(mtcars_pca, labels = rownames(mtcars_cont), labels.size = 3,
+         groups = , ellipse = ) +
+  labs(colour = "Region") +
+  theme_minimal()
+```
+
+**Q8.** Does the biplot support the hypothesis? Which region is the most homogeneous, and which the least? Name a car that doesn't fit its region's pattern.
+
+::: callout-note
+### Aside: GitHub
+
+Older versions of this lab installed `ggbiplot` from **GitHub**. What is GitHub, and who owns it? Try to explain it in two or three sentences to someone who has never written code. Why might a package be on GitHub but not on CRAN?
+:::
+
+------------------------------------------------------------------------
+
+## Part 3: PCA from scratch
+
+`princomp()` is not magic. With $\mathbf{Z}$ the $n \times p$ matrix of standardised data, the correlation matrix is $\mathbf{R} = \frac{1}{n-1}\mathbf{Z}^\top\mathbf{Z}$. PCA is its eigendecomposition,
+
+$$
+\mathbf{R} = \mathbf{V} \boldsymbol\Lambda \mathbf{V}^\top,
+$$
+
+where the columns of $\mathbf{V}$ are the **loadings** (eigenvectors) and the diagonal of $\boldsymbol\Lambda$ holds the component **variances** (eigenvalues $\lambda_1 \ge \dots \ge \lambda_p$). The **scores** are $\mathbf{Y} = \mathbf{Z}\mathbf{V}$. Equivalently, if $\mathbf{Z} = \mathbf{U}\mathbf{D}\mathbf{V}^\top$ is the singular value decomposition, then $\lambda_j = d_j^2 / (n-1)$ with the same $\mathbf{V}$.
+
+**Q9.** Compute the eigenvalues and eigenvectors of the correlation matrix of `mtcars_cont` with `eigen()`, and compare them with `mtcars_pca$sdev^2` and `mtcars_pca$loadings`. Then check the SVD route. What do you notice about the signs of the eigenvectors? Why can't PCA pin them down?
+
+```{r}
+Z   <- scale(mtcars_cont)        # centre, and divide by sd() (divisor n - 1)
+eig <- eigen( )
+
+# eigenvalues vs princomp variances
+
+
+# ratio of eigenvectors to princomp loadings
+
+
+# SVD route
+sv <- svd(Z)
+
+```
+
+**Q10.** Compute the scores by hand as $\mathbf{Y} = \mathbf{Z}\mathbf{V}$, and compare them with `mtcars_pca$scores`. Then run `prcomp(mtcars_cont, scale. = TRUE)`, R's other PCA function, and compare its `sdev` and scores (stored in `$x`) with `princomp()`. Explain any differences. *Hint: compute* `sqrt(32 / 31)`.
+
+```{r}
+scores_hand <-
+round(head(mtcars_pca$scores[, 1:3] / scores_hand[, 1:3]), 4)
+
+mtcars_prcomp <- prcomp(mtcars_cont, scale. = TRUE)
+
+```
+
+------------------------------------------------------------------------
+
+## Part 4: Case study — what is a sports car?
+
+Motor insurers price a vehicle partly on its type, and sports cars are associated with higher claim frequency and severity. But "sports car" has no legal definition. Ingenbleek and Lemaire (1988, *ASTIN Bulletin*) proposed a statistical classification based on a car's technical specification. Rentzmann and Wüthrich (2019), *Unsupervised learning: What is a sports car?*, revisited it with PCA and neural networks, using the data set below. Their tutorial is linked from the Actuarial Data Science page in the course README.
+
+Make sure `SportsCars.csv` (from the course GitHub page) is in the same folder as this notebook. The file uses semicolons as separators. Each row is a car model, described by:
+
+| Variable | Description |
+|------------------------------------|------------------------------------|
+| `brand`, `type`, `model` | identifiers |
+| `cubic_capacity` | engine size (cm³) |
+| `max_power` | maximum power (kW) |
+| `max_torque` | maximum torque (Nm) |
+| `seats` | number of seats |
+| `weight` | weight (kg) |
+| `max_engine_speed` | maximum engine speed (rpm) |
+| `seconds_to_100` | acceleration time, 0–100 km/h (s) |
+| `top_speed` | top speed (km/h) |
+| `sports_car` | 1 if classified as a sports car by the Ingenbleek–Lemaire rule |
+| `tau` | the Ingenbleek–Lemaire index |
+
+### Task 1: Load and inspect the data
+
+Load the data and inspect it. How many cars and brands are there? Are there missing values? Which columns should *not* be used as inputs to an unsupervised PCA, and why? Check that `sports_car` is exactly the rule `tau < 17`.
+
+```{r}
+cars <- read_delim("SportsCars.csv", delim = ";", show_col_types = FALSE)
+glimpse(cars)
+
+# number of brands, missing values per column, number of sports cars
+
+
+# check the tau < 17 rule
+
+```
+
+### Task 2: Feature engineering
+
+Following Rentzmann and Wüthrich, we don't use the raw specifications directly. Instead we use five log-transformed features:
+
+$$
+x_1 = \log\frac{\texttt{weight}}{\texttt{max\_power}}, \quad
+x_2 = \log\frac{\texttt{max\_power}}{\texttt{cubic\_capacity}}, \quad
+x_3 = \log(\texttt{max\_torque}), \quad
+x_4 = \log(\texttt{max\_engine\_speed}), \quad
+x_5 = \log(\texttt{cubic\_capacity}).
+$$
+
+Create these features and compute their correlation matrix. Why might ratios and logs be better inputs than the raw variables?
+
+```{r}
+cars_x <- cars %>%
+  transmute(x1 = log(weight / max_power),
+            x2 = ,
+            x3 = ,
+            x4 = ,
+            x5 = )
+
+```
+
+### Task 3: Fit the PCA
+
+Run a standardised PCA on `cars_x` and draw a scree plot. How much variance do the first two components explain? How many components would you keep?
+
+```{r}
+cars_pca <-
+
+```
+
+### Task 4: Interpret the components
+
+Print the loadings of the first two components and describe each in words.
+
+```{r}
+
+```
+
+### Task 5: Biplot
+
+Draw a biplot of the first two components, coloured by `sports_car`. With 475 cars, labels would be unreadable, so leave them out and use `alpha` to make the points semi-transparent. Do the sports cars form a distinct group?
+
+```{r}
+#| fig-width: 9
+#| fig-height: 7
+ggbiplot(cars_pca, groups = factor(cars$sports_car, labels = c("No", "Yes")),
+         ellipse = TRUE, alpha = ) +
+  labs(colour = "Sports car") +
+  theme_minimal()
+```
+
+### Task 6: A PCA-based sports car rule
+
+We now use `Comp.1` as a one-number "sportiness" score. Because the sign of a component is arbitrary (Part 3), we first orient it so that **higher values mean more weight per kW**, i.e. less sporty. The first line below does this: it multiplies the scores by the sign of $x_1$'s loading. Then:
+
+1.  compute the correlation between this score and `tau`;
+2.  flag as "sporty" the 72 cars with the lowest score, the same number the Ingenbleek–Lemaire rule flags;
+3.  cross-tabulate the PCA classification against `sports_car`. On what proportion of cars do the two rules agree?
+
+```{r}
+pc1 <- cars_pca$scores[, 1] * sign(cars_pca$loadings["x1", 1])
+
+cars <- cars %>%
+  mutate(pc1 = pc1,
+         pc_sporty = rank(pc1) <= sum(sports_car))
+
+# correlation with tau, cross-table, agreement
+
+```
+
+**Q11.** Why might an insurer prefer a continuous score like `pc1` to a 0/1 "sports car" flag as a rating factor in a GLM like the ones in Lab 3? Can you think of a disadvantage?
+
+------------------------------------------------------------------------
+
+## Stretch: principal component regression
+
+In Lab 3 we saw that correlated predictors make individual regression coefficients unstable. **Principal component regression (PCR)** replaces the predictors with their first few principal components. These are uncorrelated by construction.
+
+Run a PCA on the eight predictors of `mpg` in `mtcars_cont`, leaving out `mpg` itself. Fit (i) `lm(mpg ~ .)` on all eight original predictors and (ii) regressions of `mpg` on the first one, two and three component scores. Compare the coefficient tables and the adjusted $R^2$. Is the component that explains the most variance in the predictors always the most useful for predicting `mpg`?
+
+```{r}
+X_pca <- princomp(mtcars_cont %>% select(-mpg), cor = TRUE)
+pcr_dat <- data.frame(mpg = mtcars_cont$mpg, X_pca$scores)
+
+full <- lm(mpg ~ ., data = mtcars_cont)
+pcr1 <- lm(mpg ~ Comp.1, data = pcr_dat)
+
+```

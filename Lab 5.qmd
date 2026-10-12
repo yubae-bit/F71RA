@@ -1,0 +1,350 @@
+---
+title: "Lab 5: PCA as compression"
+subtitle: "F71RA Machine Learning for Risk and Insurance 1"
+author: "Yubo Rasmussen"
+format: docx
+editor: visual
+toc: true
+---
+
+## Before you start
+
+In Lab 4 we used PCA to *describe* data: which variables move together, and which cars look alike. This lab looks at PCA from a different angle, as a way to **compress** data. If five features can be squeezed into two numbers per car, how much is lost when we try to get the five back? This question leads directly to *autoencoders* in Lab 6, which are neural networks trained to do exactly this. They can also compress in nonlinear ways that PCA cannot.
+
+We stay with the sports car data and the five log features from Lab 4, Part 4. Part 1 checks the features before using them. Part 2 builds PCA from the singular value decomposition, step by step, following the code in the lecture slides. Part 3 measures the reconstruction error and works out exactly where it comes from. Part 4 asks whether PCA fitted on some cars works on cars it has never seen. Part 5 connects PCA to autoencoders.
+
+**Learning objectives.** By the end of this lab you should be able to
+
+-   check the distribution of features before PCA with scatter plot matrices, density plots and QQ plots;
+-   compute principal components with `svd()`, and check the result against `princomp()`;
+-   reconstruct data from $p$ principal components and compute the reconstruction error;
+-   explain the link between the reconstruction error and the discarded eigenvalues;
+-   fit PCA on a training set and apply it correctly to new data;
+-   describe PCA as a linear encoder–decoder, and explain why a nonlinear one might do better.
+
+**A clean start.** Older notebooks begin with `rm(list = ls())`. This deletes the objects in your workspace, but it does not unload packages or reset options, so it is not a true fresh start. In RStudio, **Session → Restart R** (Ctrl/Cmd + Shift + F10) is better. When you render a Quarto document, it always runs in a fresh R session anyway, which is one reason to render your work regularly.
+
+**Packages.** Install anything missing with `install.packages()`.
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)
+library(GGally)      # ggpairs()
+library(ggcorrplot)  # ggcorrplot()
+```
+
+------------------------------------------------------------------------
+
+## Part 1: Look before you compress
+
+Make sure `SportsCars.csv` is in the same folder as this notebook. We recreate the five features from Lab 4:
+
+$$
+x_1 = \log\frac{\texttt{weight}}{\texttt{max\_power}}, \quad
+x_2 = \log\frac{\texttt{max\_power}}{\texttt{cubic\_capacity}}, \quad
+x_3 = \log(\texttt{max\_torque}), \quad
+x_4 = \log(\texttt{max\_engine\_speed}), \quad
+x_5 = \log(\texttt{cubic\_capacity}),
+$$
+
+and split the cars into three groups by the Ingenbleek–Lemaire index `tau`: sports cars ($\tau < 17$), a middle group ($17 \le \tau < 21$), and the rest ($\tau \ge 21$). Complete the code below.
+
+```{r}
+SC <- read_delim("SportsCars.csv", delim = ";", show_col_types = FALSE) %>%
+  mutate(x1 = log(weight / max_power),
+         x2 = ,
+         x3 = ,
+         x4 = ,
+         x5 = ,
+         sports_type = cut(tau, breaks = c(0, 17, 21, 100), right = FALSE,
+                           labels = c("tau < 17 (sports car)",
+                                      "17 <= tau < 21",
+                                      "tau >= 21")))
+
+count(SC, sports_type)
+```
+
+### Scatter plot matrix
+
+`ggpairs()` draws every pair of variables against each other: scatter plots below the diagonal, densities on the diagonal and correlations above it. Colour the points by `sports_type`.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 9
+#| message: false
+ggpairs(SC, columns = c("x1", "x2", "x3", "x4", "x5"),
+        mapping = aes(colour = , alpha = 0.5),
+        upper = list(continuous = wrap("cor", size = 3)))
+```
+
+**Q1.** Which pairs of features are most strongly related? On which feature(s) do the three `tau` groups separate most clearly? Is any feature on its own enough to identify sports cars?
+
+### Are the features roughly normal?
+
+PCA does not *require* normal data, but it is built on variances and correlations. These summarise the data well when the distributions are roughly symmetric without extreme outliers, and badly when they are not. The function below plots each feature's density together with a normal density that has the same mean and standard deviation. Call it for each of the five features.
+
+```{r}
+density_plot <- function(var_name) {
+  v    <- SC[[var_name]]
+  dens <- density(v)
+  tibble(x = dens$x, empirical = dens$y,
+         normal = dnorm(dens$x, mean = mean(v), sd = sd(v))) %>%
+    ggplot(aes(x = x)) +
+    geom_line(aes(y = empirical), linewidth = 1) +
+    geom_line(aes(y = normal), linewidth = 1, colour = "blue", linetype = "dashed") +
+    labs(x = var_name, y = "density",
+         title = paste("Density of", var_name, "(dashed: normal fit)"))
+}
+
+density_plot("x1")
+
+```
+
+QQ plots show the same comparison in a way that makes the tails easier to see. `par(mfrow = c(a, b))` splits the plotting window into a grid of `a` rows and `b` columns. Complete the loop.
+
+```{r}
+#| fig-width: 12
+#| fig-height: 3
+par(mfrow = c(1, 5))
+for (v in c("x1", "x2", "x3", "x4", "x5")) {
+  qqnorm( , main = v)
+  qqline( , col = "red", lty = 2, lwd = 2)
+}
+par(mfrow = c(1, 1))
+```
+
+**Q2.** Which feature looks least normal, and in what way? Could you have guessed this from the raw data? (*Hint:* `summary(SC$max_engine_speed)`.) Why might this feature cause trouble for PCA later?
+
+```{r}
+
+```
+
+------------------------------------------------------------------------
+
+## Part 2: PCA via the SVD
+
+### Standardise
+
+Build the $n \times 5$ design matrix of features and standardise each column to mean 0 and standard deviation 1. Check the column means and standard deviations, and visualise the correlation matrix with `ggcorrplot()`.
+
+```{r}
+X_raw <- SC %>% select(x1:x5) %>% as.matrix()
+X     <-
+n     <- nrow(X)
+
+```
+
+### The singular value decomposition
+
+Any $n \times q$ matrix can be written as $\mathbf{X} = \mathbf{U}\mathbf{D}\mathbf{V}^\top$. Here $\mathbf{U}$ ($n \times q$) and $\mathbf{V}$ ($q \times q$) have orthonormal columns, and $\mathbf{D}$ is diagonal with singular values $d_1 \ge \dots \ge d_q \ge 0$. As in Lab 4, Part 3, the columns of $\mathbf{V}$ are the principal component loadings, the scores are $\mathbf{Y} = \mathbf{X}\mathbf{V} = \mathbf{U}\mathbf{D}$, and the component variances are $d_j^2 / (n-1)$.
+
+Compute the SVD of `X`, display its structure with `str()`, and extract `V`.
+
+```{r}
+svdX <-
+
+V <-
+```
+
+**Q3.** Check that $\mathbf{V}$ is orthogonal, i.e. $\mathbf{V}^\top\mathbf{V} = \mathbf{I}$. The off-diagonal entries will not be exactly zero. Why not, and how should you test for "equal to the identity" in code? (*Hint:* `?all.equal`.)
+
+```{r}
+
+```
+
+### Scores and the summary table
+
+Compute the scores and build a summary table with, for each component, the singular value, the standard deviation of the scores, the proportion of variance explained and the cumulative proportion.
+
+```{r}
+Y <-
+colnames(Y) <- paste0("PC", 1:5)
+
+pca_summary <- tibble(
+  component  = 1:5,
+  sing_value = svdX$d,
+  sd_pc      = ,
+  prop_var   = ,
+  cum_var    =
+)
+pca_summary
+```
+
+**Q4.** Compare `pca_summary` with `summary(princomp(X, cor = TRUE))`, and the first column of `V` with the first column of the `princomp()` loadings. Then look at `princomp(X, cor = TRUE)$scale`. We already standardised `X`, so why isn't it exactly 1?
+
+```{r}
+pca <- princomp(X, cor = TRUE)
+
+```
+
+**Q5.** Plot the scores with `ggpairs()`, and compute their correlation matrix. What do you notice, and why does it happen? (*Hint: what is* $\mathbf{Y}^\top\mathbf{Y}$*?*)
+
+```{r}
+#| fig-width: 8
+#| fig-height: 8
+#| message: false
+
+```
+
+### The first two components
+
+Plot the cars on the first two principal components, coloured by `sports_type`.
+
+```{r}
+SC <- bind_cols(SC, as_tibble(Y))
+
+ggplot(SC, aes(x = , y = , colour = sports_type)) +
+  geom_point(alpha = 0.7) +
+  labs(x = "First principal component", y = "Second principal component",
+       colour = NULL, title = "Sports cars on the first two principal components")
+```
+
+The base R `biplot()` function adds the loadings as arrows. It needs the scores and loadings as separate arguments:
+
+```{r}
+#| fig-width: 8
+#| fig-height: 8
+biplot(Y[, 1:2], V[, 1:2], expand = 2, cex = c(0.4, 1.2),
+       xlab = "PC1", ylab = "PC2", xlim = c(-7, 7), ylim = c(-7, 7))
+```
+
+------------------------------------------------------------------------
+
+## Part 3: Reconstruction error
+
+### Compress, then decompress
+
+If we keep only the first $p$ components, each car is described by $p$ numbers, its scores $\mathbf{Y}_p = \mathbf{X}\mathbf{V}_p$, where $\mathbf{V}_p$ is the first $p$ columns of $\mathbf{V}$. To get back to the five features we map the scores back with $\mathbf{V}_p^\top$:
+
+$$
+\hat{\mathbf{X}}_p = \mathbf{Y}_p \mathbf{V}_p^\top = \mathbf{X}\mathbf{V}_p\mathbf{V}_p^\top .
+$$
+
+$\hat{\mathbf{X}}_p$ is the projection of each car onto the best-fitting $p$-dimensional plane through the data. The **reconstruction error** is the root mean squared distance between each car and its projection,
+
+$$
+\text{RE}(p) = \sqrt{\frac{1}{n}\sum_{i=1}^n \lVert \mathbf{x}_i - \hat{\mathbf{x}}_{i,p} \rVert^2 } .
+$$
+
+**Q6.** Complete the function below and compute $\text{RE}(p)$ for $p = 1, \dots, 5$. What is it for $p = 5$, and why? Plot $\text{RE}(p)$ against $p$. Why do we need `drop = FALSE`?
+
+```{r}
+recon_error <- function(X, V, p) {
+  Vp <- V[, 1:p, drop = FALSE]
+  X_hat <-
+  sqrt(sum((X - X_hat)^2) / nrow(X))
+}
+
+RE <- sapply(1:5, function(p) recon_error(X, V, p))
+round(RE, 5)
+
+```
+
+### Where the error comes from
+
+**Q7.** Show numerically that
+
+$$
+\text{RE}(p)^2 = \frac{n-1}{n}\sum_{j=p+1}^{5} \lambda_j ,
+$$
+
+where $\lambda_j = d_j^2/(n-1)$ are the eigenvalues. In words: the squared reconstruction error is the variance we discarded. Can you explain why? (*Hint:* $\mathbf{X} - \hat{\mathbf{X}}_p = \sum_{j>p} \mathbf{u}_j d_j \mathbf{v}_j^\top$.)
+
+```{r}
+lambda <- svdX$d^2 / (n - 1)
+discarded <- sapply(1:5, function(p) sum(lambda[-(1:p)]))
+
+```
+
+### Is PCA really the best?
+
+The **Eckart–Young theorem** says that no other $p$-dimensional linear projection has a smaller reconstruction error than PCA. We can test this.
+
+**Q8.** Generate 1,000 random two-dimensional projections. For each, take a random $5 \times 2$ matrix, orthonormalise its columns with `qr.Q(qr(...))`, and compute the reconstruction error. How does the best random projection compare with PCA?
+
+```{r}
+set.seed(2026)
+RE_random <- replicate(1000, {
+  Q <- qr.Q(qr(matrix(rnorm(10), nrow = 5)))
+  recon_error(X, Q, 2)
+})
+
+```
+
+### Which cars reconstruct worst?
+
+**Q9.** Compute each car's squared reconstruction error with $p = 2$ and list the five worst cars with their features. What do they have in common? Link your answer to Q2.
+
+```{r}
+Vp    <- V[, 1:2]
+X_hat <- X %*% Vp %*% t(Vp)
+
+SC %>%
+  mutate(err2 = ) %>%
+  arrange(desc(err2)) %>%
+  select(brand, type, err2, max_engine_speed, cubic_capacity, max_power, weight, tau) %>%
+  head(5)
+```
+
+------------------------------------------------------------------------
+
+## Part 4: PCA on new data
+
+In practice a PCA is fitted once, say when a pricing model is built, and then applied to new cars as they come onto the market. A fair test of the compression is therefore how well it works on cars that were *not* used to fit it.
+
+**Q10.** Split the cars at random into a training set of 380 (80%) and a test set of 95. Using the training set only, compute the column means and standard deviations, standardise, and compute the loadings. Then standardise the test set *with the training means and standard deviations* and compute the reconstruction errors for $p = 1, 2, 3$ on both sets. Is there evidence of overfitting?
+
+```{r}
+set.seed(2026)
+train_idx <- sample(n, size = 380)
+
+X_train_raw <- X_raw[train_idx, ]
+X_test_raw  <- X_raw[-train_idx, ]
+
+mu  <- colMeans(X_train_raw)
+sig <- apply(X_train_raw, 2, sd)
+
+X_train <- scale(X_train_raw, center = mu, scale = sig)
+X_test  <-
+
+V_train <-
+
+```
+
+**Q11.** A colleague standardises the test set using its *own* means and standard deviations, `scale(X_test_raw)`. Why is this wrong? Think about what happens when you need to score a single new car.
+
+------------------------------------------------------------------------
+
+## Part 5: From PCA to autoencoders
+
+We can describe PCA with $p$ components as two functions:
+
+-   an **encoder** $f(\mathbf{x}) = \mathbf{V}_p^\top\mathbf{x}$, which compresses five features into $p$ numbers;
+-   a **decoder** $g(\mathbf{y}) = \mathbf{V}_p\,\mathbf{y}$, which expands $p$ numbers back into five features.
+
+PCA chooses $\mathbf{V}_p$ to minimise the reconstruction error $\sum_i \lVert \mathbf{x}_i - g(f(\mathbf{x}_i))\rVert^2$. An **autoencoder** is a neural network with the same structure: an encoder network squeezes the input through a narrow middle layer, the *bottleneck*, and a decoder network expands it again. The weights are trained to minimise the same loss. If both networks are linear with no activation functions, the best autoencoder spans the same subspace as PCA. Adding nonlinear activation functions lets it fit *curved* surfaces through the data instead of flat planes.
+
+**Q12.** Write the encoder and decoder as R functions, check that `decoder(encoder(x))` reproduces `X_hat` from Q9 for the first car, and compute the encoding of the first car in the data set.
+
+```{r}
+encoder <- function(x, p = 2)
+decoder <- function(y)
+
+x_first <- X[1, ]
+
+```
+
+**Q13.** Using your answers to Q5 and Q9, explain why a nonlinear autoencoder with a two-dimensional bottleneck might achieve a lower reconstruction error than PCA. Can it ever do worse than PCA, *on the training data*?
+
+------------------------------------------------------------------------
+
+## Stretch: errors in the original units
+
+Reconstruction errors on the standardised log scale are hard to interpret. An underwriter wants to know: if we store only two numbers per car, how far off are the weight, power and engine size we recover?
+
+Undo the standardisation and the log transforms for $p = 2$ and $p = 3$. Then compute the median absolute percentage error in `cubic_capacity`, `max_power` and `weight`. (*Hints:* `attr(X, "scaled:center")` and `attr(X, "scaled:scale")` hold the means and standard deviations used by `scale()`, and `sweep()` applies them column by column. Then $\widehat{\texttt{cc}} = e^{\hat x_5}$, $\widehat{\texttt{power}} = e^{\hat x_2}\,\widehat{\texttt{cc}}$, $\widehat{\texttt{weight}} = e^{\hat x_1}\,\widehat{\texttt{power}}$.)
+
+```{r}
+
+```
