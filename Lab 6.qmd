@@ -1,0 +1,371 @@
+---
+title: "Lab 6: From GLMs to neural networks"
+subtitle: "F71RA Machine Learning for Risk and Insurance 1"
+author: "Yubo Rasmussen"
+format: docx
+editor: visual
+toc: true
+---
+
+## Before you start
+
+Next week you will fit a neural network for claim frequency with Keras. Keras hides almost everything: one line builds the network, another trains it. This lab opens the box first. Using nothing but base R and the matrix algebra from Lab 1, we will:
+
+-   see that the Poisson GLM from Lab 3 *is* a neural network, just one with no hidden layer;
+-   fit it by **gradient descent** on the deviance loss, the way neural networks are trained, and check that we recover `glm()`;
+-   add a hidden layer, derive the gradients by hand (**backpropagation**), and check them numerically;
+-   train the network, compare it with the GLM on held-out data, and see overfitting happen.
+
+Part 1 starts with the distinction between supervised and unsupervised learning, which ties Labs 4 and 5 to this one. Part 4 ends with an exam-style discussion of rating factors.
+
+**Learning objectives.** By the end of this lab you should be able to
+
+-   explain the difference between supervised and unsupervised learning, with insurance examples;
+-   write a Poisson GLM as a single-neuron network and derive the gradient of the deviance loss;
+-   implement gradient descent, and explain the role of the learning rate and of standardising inputs;
+-   implement and check backpropagation for a network with one hidden layer;
+-   use a test set to compare models and detect overfitting;
+-   discuss the qualities of a good rating factor and how to evaluate a new one.
+
+**Packages and data.** We only need the tidyverse. Make sure `freMTPL2freq.csv` (unzipped from `freMTPL2freq.zip` on the course GitHub page) is in the same folder as this notebook, as in Lab 3. Some chunks train a model for a few thousand iterations and may take a minute to run.
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)
+```
+
+------------------------------------------------------------------------
+
+## Part 1: Supervised and unsupervised learning
+
+In Labs 4 and 5 we analysed car characteristics without any response variable. In Lab 3, and again today, we predict a response: the number of claims. This is the most basic distinction in machine learning.
+
+**Q1** *(SP8, September 2023, adapted).* Explain, in your own words, the differences between supervised and unsupervised learning in the context of building a predictive model. Give an insurance example of each. \[5\]
+
+------------------------------------------------------------------------
+
+## Part 2: A Poisson GLM is a neural network
+
+### The data
+
+We use the French MTPL data from Labs 2 and 3, with the same caps and the same 10% / 90% train/test split as Lab 3, Task 4. To keep the network small we use the seven *numeric* rating factors only. `VehGas` becomes a 0/1 `Diesel` indicator and `Area` (A to F) is coded 1 to 6. Categorical factors with many levels, such as `VehBrand` and `Region`, need a different treatment (*embeddings*), which you will meet in Lab 7.
+
+```{r}
+#| message: false
+dat <- read_csv("freMTPL2freq.csv", show_col_types = FALSE) %>%
+  mutate(ClaimNb    = pmin(ClaimNb, 4),
+         Exposure   = pmin(Exposure, 1),
+         Diesel     = as.numeric(VehGas == "Diesel"),
+         AreaCode   = as.integer(factor(Area)),
+         logDensity = log(Density))
+
+features <- c("VehPower", "VehAge", "DrivAge", "BonusMalus",
+              "logDensity", "Diesel", "AreaCode")
+
+set.seed(2026)
+train_idx <- sample(nrow(dat), size = round(0.1 * nrow(dat)))
+train <- dat[train_idx, ]
+test  <- dat[-train_idx, ]
+```
+
+Neural networks are trained by gradient descent, which works badly when inputs have very different scales (we will see why in Q4). So we standardise each feature with the *training* means and standard deviations. Complete the code: as in Lab 5, Q11, the test set must be standardised with the training statistics, not its own.
+
+```{r}
+mu_x <- colMeans(train[features])
+sd_x <- sapply(train[features], sd)
+
+X_train <- scale(as.matrix(train[features]), center = mu_x, scale = sd_x)
+X_test  <-
+
+y_train <- train$ClaimNb;          y_test <- test$ClaimNb
+o_train <- log(train$Exposure);    o_test <- log(test$Exposure)
+```
+
+### The GLM as a single neuron
+
+The Poisson GLM with log link and exposure offset is
+
+$$
+\mu_i = \exp\big(o_i + \beta_0 + \beta_1 x_{i1} + \dots + \beta_q x_{iq}\big),
+\qquad o_i = \log(\text{Exposure}_i).
+$$
+
+In neural network language this is a single **neuron**. It takes a weighted sum of its inputs plus a **bias** $\beta_0$ and passes the result through an **activation function**, here $\exp$, which guarantees a positive output. A network with no hidden layer and an exponential output activation *is* a Poisson GLM.
+
+We measure fit with the mean Poisson deviance from Lab 3. Training a neural network means minimising a loss, and for count data the deviance is the natural choice.
+
+$$
+\mathcal{L}(\boldsymbol\beta) = \frac{2}{n}\sum_{i=1}^n \left[ y_i \log\frac{y_i}{\mu_i} - (y_i - \mu_i) \right].
+$$
+
+```{r}
+poisson_deviance <- function(y, mu) {
+  mu <- pmax(mu, 1e-10)
+  2 * mean(ifelse(y == 0, 0, y * log(y / mu)) - (y - mu))
+}
+
+glm_forward <- function(beta, X, offset) {
+  as.vector(exp(offset + beta[1] + X %*% beta[-1]))
+}
+```
+
+As a benchmark, fit the same model with `glm()`. `reformulate()` builds the formula from the vector of feature names. Compute the training and test deviance of the fitted GLM.
+
+```{r}
+train_std <- data.frame(ClaimNb = y_train, Exposure = train$Exposure, X_train)
+form <- reformulate(c(features, "offset(log(Exposure))"), response = "ClaimNb")
+
+glm_fit  <- glm(form, family = , data = train_std)
+beta_glm <- coef(glm_fit)
+round(beta_glm, 4)
+
+```
+
+### Gradient descent
+
+`glm()` finds $\hat{\boldsymbol\beta}$ with a fast specialised algorithm (iteratively reweighted least squares). Neural networks are too complicated for that, so they use **gradient descent**. Start somewhere, compute the gradient of the loss (the direction of steepest increase), take a small step the other way, and repeat:
+
+$$
+\boldsymbol\beta^{(t+1)} = \boldsymbol\beta^{(t)} - \eta \, \nabla_{\boldsymbol\beta}\mathcal{L}\big(\boldsymbol\beta^{(t)}\big),
+$$
+
+where the step size $\eta > 0$ is the **learning rate**.
+
+**Q2.** Show that the gradient of the mean Poisson deviance is
+
+$$
+\nabla_{\boldsymbol\beta}\mathcal{L} = \frac{2}{n}\sum_{i=1}^n (\mu_i - y_i)\,\tilde{\mathbf{x}}_i = \frac{2}{n}\tilde{\mathbf{X}}^\top(\boldsymbol\mu - \mathbf{y}),
+$$
+
+where $\tilde{\mathbf{x}}_i = (1, x_{i1}, \dots, x_{iq})^\top$ includes a 1 for the intercept. *Hint: use the chain rule through* $\eta_i = o_i + \tilde{\mathbf{x}}_i^\top\boldsymbol\beta$, *and* $\partial\mu_i/\partial\eta_i = \mu_i$. What does the first component of the equation $\nabla_{\boldsymbol\beta}\mathcal{L} = \mathbf{0}$ tell you about the fitted model?
+
+**Q3.** Complete the gradient descent function below. Run it for 500 iterations with learning rates $\eta = 0.5, 2, 5$ and $10$. Plot the training loss against the iteration number for each, and compare the final coefficients with `beta_glm`. What happens with $\eta = 10$?
+
+```{r}
+gd_glm <- function(X, y, offset, lr, iters = 500) {
+  X1   <- cbind(1, X)
+  beta <- c(log(sum(y) / sum(exp(offset))), rep(0, ncol(X)))  # start at the overall frequency
+  loss <- numeric(iters)
+  for (t in 1:iters) {
+    mu      <- as.vector(exp(offset + X1 %*% beta))
+    loss[t] <- poisson_deviance(y, mu)
+    grad    <-
+    beta    <-
+  }
+  list(beta = beta, loss = loss)
+}
+
+lrs <- c(0.5, 2, 5, 10)
+fits <- lapply(lrs, function(lr) gd_glm(X_train, y_train, o_train, lr))
+
+# largest difference from glm() for each learning rate
+sapply(fits, function(f) max(abs(f$beta - beta_glm)))
+
+map2_dfr(fits, lrs, ~ tibble(iteration = 1:500, loss = .x$loss, lr = factor(.y))) %>%
+  filter(is.finite(loss)) %>%
+  ggplot(aes(x = iteration, y = loss, colour = lr)) +
+  geom_line() +
+  coord_cartesian(ylim = c(0.315, 0.33)) +
+  labs(y = "Training deviance", colour = "Learning rate")
+```
+
+**Q4.** Now run `gd_glm()` on the *unstandardised* features, `as.matrix(train[features])`, with $\eta = 5$ and with $\eta = 0.001$. What happens? Why does standardising help?
+
+```{r}
+X_train_raw <- as.matrix(train[features])
+
+```
+
+------------------------------------------------------------------------
+
+## Part 3: Adding a hidden layer
+
+### The network
+
+A GLM is linear on the log scale. It cannot discover, say, a U-shaped effect of driver age unless we build one in by banding (Lab 3, Stretch). A neural network learns such shapes itself by inserting a **hidden layer** between the inputs and the output:
+
+$$
+\begin{aligned}
+\mathbf{z}_i &= \tanh\!\big(\mathbf{W}_1^\top \mathbf{x}_i + \mathbf{b}_1\big) &&\in \mathbb{R}^m \quad \text{(hidden layer, } m \text{ neurons)}\\
+\mu_i &= \exp\!\big(o_i + b_2 + \mathbf{w}_2^\top \mathbf{z}_i\big) &&\in \mathbb{R}_+ \quad \text{(output neuron)}
+\end{aligned}
+$$
+
+$\mathbf{W}_1$ is a $q \times m$ matrix of weights, $\mathbf{b}_1$ a vector of $m$ biases, $\mathbf{w}_2$ a vector of $m$ output weights and $b_2$ the output bias. Each hidden neuron is a little GLM with a $\tanh$ activation. The output neuron is a Poisson GLM whose inputs are the hidden neurons' outputs, i.e. **features that the network has learned** rather than ones we designed. The offset enters exactly as before.
+
+```{r}
+init_net <- function(q, m, base_rate) {
+  list(W1 = matrix(rnorm(q * m, sd = 1 / sqrt(q)), nrow = q, ncol = m),
+       b1 = rep(0, m),
+       w2 = rnorm(m, sd = 0.1),
+       b2 = log(base_rate))
+}
+
+forward <- function(P, X, offset) {
+  Z  <- tanh(sweep(X %*% P$W1, 2, P$b1, "+"))
+  mu <- as.vector(exp(offset + P$b2 + Z %*% P$w2))
+  list(Z = Z, mu = mu)
+}
+```
+
+**Q5.** How many parameters does this network have with $q = 7$ inputs and $m = 10$ hidden neurons? How many does the GLM have? What happens to the network if all of $\mathbf{w}_2$ is zero? Why do we start $b_2$ at the log of the overall claim frequency?
+
+### Backpropagation
+
+To train the network by gradient descent we need the gradient of the loss with respect to every parameter. Write $\delta_i = \frac{2}{n}(\mu_i - y_i)$. From Q2 we already know the gradient for the output neuron, whose "inputs" are now $\mathbf{z}_i$. For the hidden layer we apply the chain rule once more, through $\mathbf{z}_i$. This step-by-step use of the chain rule, from the output backwards, is called **backpropagation**:
+
+$$
+\frac{\partial\mathcal{L}}{\partial b_2} = \sum_i \delta_i, \qquad
+\frac{\partial\mathcal{L}}{\partial \mathbf{w}_2} = \sum_i \delta_i\,\mathbf{z}_i, \qquad
+\frac{\partial\mathcal{L}}{\partial \mathbf{b}_1} = \sum_i \mathbf{a}_i, \qquad
+\frac{\partial\mathcal{L}}{\partial \mathbf{W}_1} = \sum_i \mathbf{x}_i\,\mathbf{a}_i^\top,
+$$
+
+where $\mathbf{a}_i = \delta_i\,\mathbf{w}_2 \odot (1 - \mathbf{z}_i^2)$ and $\odot$ is element-wise multiplication. We used $\frac{d}{du}\tanh(u) = 1 - \tanh^2(u)$. Complete the function below. *Hint:* `crossprod(A, B)` *computes* $\mathbf{A}^\top\mathbf{B}$.
+
+```{r}
+gradients <- function(P, X, y, offset) {
+  f     <- forward(P, X, offset)
+  delta <- 2 / length(y) * (f$mu - y)
+  A     <- outer(delta, P$w2) * (1 - f$Z^2)
+  list(W1 = ,
+       b1 = ,
+       w2 = as.vector(crossprod(f$Z, delta)),
+       b2 = )
+}
+```
+
+**Q6.** Hand-derived gradients are easy to get wrong, so professionals always check them numerically. Compare the backpropagation gradient for a few parameters with the **central finite difference**
+
+$$
+\frac{\partial\mathcal{L}}{\partial\theta} \approx \frac{\mathcal{L}(\theta + \varepsilon) - \mathcal{L}(\theta - \varepsilon)}{2\varepsilon}, \qquad \varepsilon = 10^{-5},
+$$
+
+using the first 5,000 training policies. Do they agree? Why is `W1[4, 3]` element number 18 of `W1`?
+
+```{r}
+set.seed(1)
+P0 <- init_net(q = length(features), m = 10, base_rate = sum(y_train) / sum(train$Exposure))
+
+X_s <- X_train[1:5000, ]; y_s <- y_train[1:5000]; o_s <- o_train[1:5000]
+loss_fn <- function(P) poisson_deviance(y_s, forward(P, X_s, o_s)$mu)
+g <- gradients(P0, X_s, y_s, o_s)
+
+numeric_grad <- function(P, name, index, eps = 1e-5) {
+  P_plus  <- P; P_plus[[name]][index]  <- P[[name]][index] + eps
+  P_minus <- P; P_minus[[name]][index] <- P[[name]][index] - eps
+
+}
+
+tibble(parameter = c("W1[1,1]", "W1[4,3]", "b1[2]", "w2[5]", "b2"),
+       backprop  = c(g$W1[1, 1], g$W1[4, 3], g$b1[2], g$w2[5], g$b2),
+       numeric   = c(numeric_grad(P0, "W1", 1),
+                     numeric_grad(P0, "W1", 4 + 2 * 7),
+                     numeric_grad(P0, "b1", 2),
+                     numeric_grad(P0, "w2", 5),
+                     numeric_grad(P0, "b2", 1)))
+```
+
+### Training the network
+
+**Q7.** Complete the training loop below and train the network with $m = 10$ hidden neurons and learning rate $\eta = 5$ for 3,000 iterations. Record the training and test deviance every 100 iterations and plot both against the iteration number, with the GLM's test deviance as a horizontal line. Does the network beat the GLM? Is there any sign of overfitting?
+
+```{r}
+train_net <- function(P, X, y, offset, X_val, y_val, offset_val,
+                      lr, iters, log_every = 100) {
+  history <- tibble()
+  for (t in 1:iters) {
+    g <- gradients(P, X, y, offset)
+    for (name in names(P)) P[[name]] <-
+    if (t %% log_every == 0) {
+      history <- bind_rows(history, tibble(
+        iteration = t,
+        train = poisson_deviance(y, forward(P, X, offset)$mu),
+        test  = poisson_deviance(y_val, forward(P, X_val, offset_val)$mu)))
+    }
+  }
+  list(P = P, history = history)
+}
+
+set.seed(1)
+P0  <- init_net(q = length(features), m = 10, base_rate = sum(y_train) / sum(train$Exposure))
+net <- train_net(P0, X_train, y_train, o_train, X_test, y_test, o_test,
+                 lr = 5, iters = 3000)
+
+glm_test <- poisson_deviance(y_test, glm_forward(beta_glm, X_test, o_test))
+
+```
+
+### What has the network learned?
+
+A network's weights are not interpretable one by one. One way to see what it has learned is a **partial dependence plot**. Set every policy's driver age to the same value, predict the annual frequency (offset 0), average over policies, and repeat for a range of ages.
+
+**Q8.** Draw partial dependence plots for `DrivAge` for the GLM and the network, using 5,000 training policies. Compare them with the raw claim frequency by driver age from Lab 2, which is highest for the youngest drivers. Why do the curves look so different from the raw frequencies? *Hint: compute the average* `BonusMalus` *in each driver age band.*
+
+```{r}
+partial_dependence <- function(predict_fn, X, ages) {
+  j <- which(features == "DrivAge")
+  sapply(ages, function(a) {
+    X_a <- X
+    X_a[, j] <- (a - mu_x["DrivAge"]) / sd_x["DrivAge"]
+    mean(predict_fn(X_a))
+  })
+}
+
+ages <- 18:90
+X_pd <- X_train[1:5000, ]
+
+pd <- tibble(
+  DrivAge = ages,
+  GLM     = partial_dependence(function(X) glm_forward(beta_glm, X, 0), X_pd, ages),
+  Network = partial_dependence(function(X) forward(net$P, X, 0)$mu, X_pd, ages)
+)
+
+# plot both curves
+
+
+# raw frequency and average BonusMalus by driver age band
+dat %>%
+  mutate(age_band = cut(DrivAge, c(18, 21, 26, 31, 41, 51, 71, 101), right = FALSE)) %>%
+  group_by(age_band) %>%
+  summarise( )
+```
+
+### Overfitting
+
+**Q9.** Repeat the training with a *small* training set: 2,000 randomly chosen training policies, $m = 20$ hidden neurons and 4,000 iterations, still evaluating on the full test set. Plot the training and test deviance (a log scale helps). What happens, and what would you do about it?
+
+```{r}
+set.seed(5)
+small <- sample(nrow(X_train), 2000)
+
+set.seed(1)
+P0_small  <- init_net(q = length(features), m = 20, base_rate = sum(y_train) / sum(train$Exposure))
+net_small <- train_net( )
+
+```
+
+------------------------------------------------------------------------
+
+## Part 4: Exam-style questions
+
+**SP8, September 2023 (adapted).**
+
+**(i)** State the qualities of a good rating factor. \[3\]
+
+*A general insurance company that writes a variety of lines of business has been approached by a third party offering data that could be useful as new rating factors.*
+
+**(ii)** Outline the analyses the pricing actuary could undertake to evaluate the potential new factors. \[3\]
+
+**(iii)** Suggest considerations that would have to be taken into account before using the factors if the analyses showed they were predictive. \[4\]
+
+------------------------------------------------------------------------
+
+## Stretch: how much does the starting point matter?
+
+Retrain the $m = 10$ network from Q7 with three different random seeds. Compare the final test deviances and the `DrivAge` partial dependence curves. What does this tell you about (a) reporting a single neural network's performance and (b) using a network for pricing?
+
+```{r}
+
+```
