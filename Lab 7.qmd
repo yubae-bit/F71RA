@@ -1,0 +1,381 @@
+---
+title: "Lab 7: Neural networks with Keras"
+subtitle: "F71RA Machine Learning for Risk and Insurance 1"
+author: "Yubo Rasmussen"
+format: docx
+editor: visual
+toc: true
+---
+
+## Before you start
+
+This lab builds a neural network that predicts the number of claims on each policy in the French motor third-party liability (MTPL) data set, using **Keras**. Training any neural network involves the same four steps, and Keras handles each of them for us:
+
+| What has to happen | How Keras does it |
+|------------------------------------|------------------------------------|
+| turn the inputs into a prediction (the *forward pass*) | a stack of *layers* (`layer_dense()`, ...) |
+| compute the gradient of the loss with respect to every weight (*backpropagation*) | automatically: Keras differentiates the loss itself |
+| move the weights a small step in the direction that reduces the loss (*gradient descent*) | an *optimiser* such as Adam or Nadam, set in `compile()` |
+| repeat the updates many times | `fit()`, which loops over *epochs* and *mini-batches* |
+
+Besides the numeric rating factors, the network uses two categorical rating factors with many levels, vehicle brand and region, through **embedding layers**.
+
+**Learning objectives.** By the end of this lab you should be able to
+
+-   prepare continuous and categorical features as inputs for a Keras network;
+-   explain what an embedding layer does and why it can be preferable to one-hot encoding;
+-   build a Keras network with several inputs, an exposure offset and an exponential output;
+-   train it with early stopping and read the training history;
+-   compare the network with a Poisson GLM on a test set, and check the *balance property*.
+
+**Code comments.** The code chunks in this lab are commented, especially the Keras code. Read the comment *above* a line before running it. If a line is still unclear, run it on its own and inspect the result with `str()`, `dim()` or `head()`. Where you see a blank, the comment tells you what is needed.
+
+### Installing Keras (once only)
+
+The R package `keras3` is an interface to the Python library Keras, which runs on TensorFlow. So you need Python as well as the R package. `install_keras()` creates a separate Python environment called `r-keras` and installs everything into it. You only do this once per computer, so the chunk below is not run when the document is rendered (`eval: false`). If you followed the older installation guide using `ISLR2` and the `keras` package, please install `keras3` as below. The old `keras` package is no longer maintained, and this lab uses the newer interface.
+
+```{r}
+#| eval: false
+install.packages("keras3")
+keras3::install_keras()   # creates the "r-keras" Python environment; takes a few minutes
+```
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)
+library(keras3)
+```
+
+Make sure `freMTPL2freq.csv` (unzipped from `freMTPL2freq.zip` on the course GitHub page) is in the same folder as this notebook.
+
+------------------------------------------------------------------------
+
+## Part 1: Preparing the data
+
+### Load and split
+
+A handful of policies record more than 4 claims or more than one year of exposure. These are treated as data errors, so we cap `ClaimNb` at 4 and `Exposure` at 1. We also convert the character columns to factors. This time the network gets 90% of the data to learn from, and 10% is kept aside as a test set.
+
+```{r}
+dat <- read_csv("freMTPL2freq.csv", show_col_types = FALSE) %>%
+  mutate(ClaimNb  = pmin(ClaimNb, 4),
+         Exposure = pmin(Exposure, 1),
+         across(c(Area, VehBrand, VehGas, Region), factor))
+
+set.seed(2026)
+learn_idx <- sample(nrow(dat), size = round(0.9 * nrow(dat)))
+learn <- dat[learn_idx, ]
+test  <- dat[-learn_idx, ]
+```
+
+### A GLM benchmark
+
+To know whether the network is any good, we need something to compare it with. We fit a Poisson GLM with the same rating factors on the same learning set. Here `VehPower` is numeric and density enters as `log(Density)`, matching what the network will see. Complete the code to compute the learning and test deviance of the GLM.
+
+```{r}
+poisson_deviance <- function(y, mu) {
+  mu <- pmax(mu, 1e-10)
+  2 * mean(ifelse(y == 0, 0, y * log(y / mu)) - (y - mu))
+}
+
+glm_fit <- glm(ClaimNb ~ Area + VehPower + VehAge + DrivAge + BonusMalus +
+                 VehBrand + VehGas + log(Density) + Region + offset(log(Exposure)),
+               family = poisson, data = learn)
+
+# predict() uses the offset in the formula, so these are expected claim counts
+learn$glm <- predict(glm_fit, newdata = learn, type = "response")
+test$glm  <-
+
+# learning and test deviance
+
+```
+
+### Continuous features: min–max scaling
+
+Gradient descent works badly when inputs are on very different scales: a step size that suits a feature measured in hundreds, such as `BonusMalus`, is far too small for one measured in single units. So we rescale every continuous input. Here we use **min–max scaling** to the interval $[-1, 1]$, a common choice for networks with $\tanh$ activations:
+
+$$
+x^* = 2\,\frac{x - \min(x)}{\max(x) - \min(x)} - 1 .
+$$
+
+`Area` and `VehGas` are ordered or binary factors, so we use their integer codes. `Density` is extremely skewed, so we take its log first. Otherwise min–max scaling would squeeze almost all policies into a tiny part of the interval.
+
+```{r}
+# Collect the 7 continuous (or integer-coded) features in one numeric matrix
+continuous_features <- function(d) {
+  cbind(DrivAge    = d$DrivAge,
+        BonusMalus = d$BonusMalus,
+        Area       = as.integer(d$Area),     # A, B, ..., F  ->  1, 2, ..., 6
+        VehPower   = d$VehPower,
+        VehAge     = d$VehAge,
+        logDensity = log(d$Density),
+        VehGas     = as.integer(d$VehGas))   # Diesel -> 1, Regular -> 2
+}
+
+raw_learn <- continuous_features(learn)
+raw_test  <- continuous_features(test)
+
+# The min and max are taken from the LEARNING set only and then applied to both
+# sets: the test set stands in for future policies, so it must not influence the fit
+x_min <- apply(raw_learn, 2, min)
+x_max <-
+
+minmax_scale <- function(X) {
+  X <- sweep(X, 2, x_min, "-")            # subtract each column's min
+  X <- sweep(X, 2, x_max - x_min, "/")    # divide by each column's range -> [0, 1]
+                                          # stretch to [-1, 1]
+}
+
+Design_learn <- minmax_scale(raw_learn)
+Design_test  <- minmax_scale(raw_test)
+
+summary(Design_learn)
+```
+
+### Categorical features: integer codes for embeddings
+
+`VehBrand` has 11 levels and `Region` 22. Embedding layers (Part 2) expect each level as an integer code starting at **0**. R's factor codes start at 1, so we subtract 1. We store each input as a one-column matrix, because Keras expects one row per policy. Complete the `Region` lines.
+
+```{r}
+Br_learn <- matrix(as.integer(learn$VehBrand) - 1L, ncol = 1)   # codes 0, ..., 10
+Br_test  <- matrix(as.integer(test$VehBrand)  - 1L, ncol = 1)
+Re_learn <-                                                      # codes 0, ..., 21
+Re_test  <-
+
+# The offset log(Exposure) is a separate input, so the network can add it on the log scale
+LogVol_learn <- matrix(log(learn$Exposure), ncol = 1)
+LogVol_test  <- matrix(log(test$Exposure),  ncol = 1)
+
+# The response
+Y_learn <- matrix(learn$ClaimNb, ncol = 1)
+Y_test  <- matrix(test$ClaimNb,  ncol = 1)
+
+n_brands  <- nlevels(dat$VehBrand)
+n_regions <- nlevels(dat$Region)
+c(n_brands = n_brands, n_regions = n_regions)
+```
+
+We use `nlevels()` on the full factor, rather than counting the distinct values in the learning set. Otherwise a level that happens to appear only in the test set would produce a code the embedding layer has never seen, and Keras would stop with an error.
+
+------------------------------------------------------------------------
+
+## Part 2: Embeddings
+
+A GLM handles a factor with $K$ levels with **one-hot encoding** (dummy variables): $K - 1$ columns of 0s and 1s, each with its own coefficient. In a network, each one-hot column would also need its own weight into *every* neuron of the first hidden layer.
+
+An **embedding layer** instead maps each level to a short vector of $d$ real numbers, here $d = 2$, which are learned together with the rest of the network:
+
+$$
+\text{VehBrand} = k \;\longmapsto\; \mathbf{e}_k = (e_{k1}, e_{k2}) \in \mathbb{R}^2, \qquad k = 0, \dots, 10 .
+$$
+
+These two numbers become two extra inputs to the first hidden layer. Brands that affect claim frequency in similar ways should end up with similar embedding vectors, close together in the plane. We look at this in Part 5.
+
+**Q1.** The first hidden layer will have 20 neurons. How many weights connect `Region` to the first hidden layer (a) with one-hot encoding (22 columns), and (b) with a 2-dimensional embedding, counting the embedding parameters too? Why might fewer parameters be an advantage?
+
+------------------------------------------------------------------------
+
+## Part 3: Building the network
+
+### Architecture
+
+Our network has four inputs and one output:
+
+```
+Design (7) ─────────────────────────┐
+VehBrand (1) ─► embedding (2) ──────┼─► concatenate (11) ─► dense 20 ─► dense 15 ─► dense 10 ─► dense 1 ─┐
+Region (1) ──► embedding (2) ───────┘                          (tanh)      (tanh)      (tanh)    (linear)  │
+LogVol (1) ────────────────────────────────────────────────────────────────────────────────────────────── add ─► exp ─► expected claims
+```
+
+The last steps mirror the Poisson GLM exactly. The final dense layer produces a number on the log scale. We add the offset $\log(\text{Exposure})$, then apply $\exp$, so the output is $\mu_i = \text{Exposure}_i \times \exp(\text{network}_i)$.
+
+In Keras we first create **input** objects, then pass them through layers with the pipe `%>%`. Each layer call returns a new object that represents that layer's output. Nothing is computed yet: we are only describing the network's structure. Complete the `Region` embedding and the second and third hidden layers.
+
+```{r}
+# Hyperparameters: choices we make, not parameters Keras learns
+q1 <- 20     # neurons in hidden layer 1
+q2 <- 15     # neurons in hidden layer 2
+q3 <- 10     # neurons in hidden layer 3
+q_emb <- 2   # embedding dimension for VehBrand and Region
+
+# Makes the random starting weights reproducible
+set_random_seed(2026)
+
+# ---- Inputs: one per type of data we feed in -----------------------------
+# shape = number of columns per policy; the number of rows is left open
+Design   <- keras_input(shape = ncol(Design_learn), name = "Design")
+VehBrand <- keras_input(shape = 1, dtype = "int32", name = "VehBrand")
+Region   <- keras_input(shape = 1, dtype = "int32", name = "Region")
+LogVol   <- keras_input(shape = 1, name = "LogVol")
+
+# ---- Embeddings ------------------------------------------------------------
+# layer_embedding() is a lookup table with input_dim rows (one per level) and
+# output_dim columns. Its output has shape (1, q_emb) per policy, so
+# layer_flatten() turns it into a plain vector of length q_emb.
+BrEmb <- VehBrand %>%
+  layer_embedding(input_dim = n_brands, output_dim = q_emb, name = "BrEmb") %>%
+  layer_flatten(name = "BrFlat")
+
+ReEmb <- Region %>%
+  layer_embedding( , name = "ReEmb") %>%
+  layer_flatten(name = "ReFlat")
+
+# ---- Main network -----------------------------------------------------------
+# Start the output bias at the log of the overall claim frequency, so the
+# untrained network already predicts the average claim frequency
+base_rate <- sum(learn$ClaimNb) / sum(learn$Exposure)
+
+Network <- list(Design, BrEmb, ReEmb) %>%
+  layer_concatenate(name = "concat") %>%                      # 7 + 2 + 2 = 11 inputs
+  layer_dense(units = q1, activation = "tanh", name = "hidden1") %>%
+  # hidden2: q2 neurons, tanh
+
+  # hidden3: q3 neurons, tanh
+
+  layer_dense(units = 1, activation = "linear", name = "Network",
+              bias_initializer = initializer_constant(log(base_rate)))
+
+# ---- Output: add the offset, then exponentiate ------------------------------
+Response <- list(Network, LogVol) %>%
+  layer_add(name = "add_offset") %>%                      # log(mu) = network + log(Exposure)
+  layer_activation(activation = "exponential", name = "Response")   # mu = exp(...)
+
+# ---- Assemble: tell Keras which objects are the inputs and the output ------
+model <- keras_model(inputs = list(Design, VehBrand, Region, LogVol),
+                     outputs = Response)
+summary(model)
+```
+
+------------------------------------------------------------------------
+
+## Part 4: Training
+
+### Compile
+
+`compile()` sets the loss and the optimiser. Keras's built-in `"poisson"` loss is
+
+$$
+\text{loss}_{\text{Keras}} = \frac{1}{n}\sum_{i=1}^n \big(\mu_i - y_i \log \mu_i\big).
+$$
+
+The optimiser **Nadam** is a refinement of gradient descent. Like Adam, it adapts the step size separately for each parameter and uses *momentum*, a running average of past gradients. This makes it much less sensitive to the learning rate than plain gradient descent with a fixed step size. It still has a learning rate, though, and so do the batch size and the number of epochs: they are *hyperparameters* that we choose. With Nadam's default learning rate of 0.001 and batches of 10,000 policies, this network needs several hundred epochs to converge. After trying a few combinations, we use a learning rate of 0.003 and batches of 2,000. With these settings training stops after roughly 100 epochs, which takes about a minute.
+
+```{r}
+model %>% compile(loss = "poisson",
+                  optimizer = optimizer_nadam(learning_rate = 0.003))   # default is 0.001
+```
+
+**Q2.** Show that the Keras Poisson loss and the mean Poisson deviance differ only by a term that does not depend on $\mu$, so minimising one minimises the other. Write the deviance in terms of the Keras loss.
+
+### Fit
+
+`fit()` runs the training loop:
+
+-   An **epoch** is one pass through the whole learning set.
+-   Within an epoch the data are split into **mini-batches** of `batch_size` policies, and the parameters are updated once per batch, so there are many small steps per epoch. This is much faster than computing the gradient on all policies before every step.
+-   `validation_split = 0.2` holds back the last 20% of the learning data as a **validation set**. It is never used for updating the weights, but its loss is reported after every epoch.
+-   The **early stopping** callback watches the validation loss and stops training once it has not improved for `patience` epochs. It then restores the weights from the best epoch. This guards against *overfitting*: continuing to improve on the learning data while getting worse on new data.
+
+Training takes about a minute.
+
+```{r}
+#| fig-width: 8
+#| fig-height: 4
+early_stop <- callback_early_stopping(monitor = "val_loss", patience = 10,
+                                      restore_best_weights = TRUE)
+
+history <- model %>% fit(
+  # The inputs are matched to the keras_input() objects by their names
+  x = list(Design = Design_learn, VehBrand = Br_learn,
+           Region = Re_learn, LogVol = LogVol_learn),
+  y = Y_learn,
+  epochs = 200,              # upper limit; early stopping usually ends sooner
+  batch_size = 2000,         # policies per gradient step
+  validation_split = 0.2,
+  callbacks = list(early_stop),
+  verbose = 0                # set to 1 to watch the progress live
+)
+
+plot(history)
+length(history$metrics$loss)    # number of epochs actually run
+```
+
+**Q3.** Describe the training history. How many epochs ran, and which epoch's weights did early stopping keep? The validation loss is higher than the training loss from the very first epoch. Is that a sign of overfitting?
+
+------------------------------------------------------------------------
+
+## Part 5: Results
+
+### Test performance
+
+Complete the code to compute the network's predictions on the test set, then fill in the table of deviances.
+
+```{r}
+# Inputs for the two data sets, in the same named form as for fit()
+x_learn <- list(Design = Design_learn, VehBrand = Br_learn, Region = Re_learn, LogVol = LogVol_learn)
+x_test  <- list(Design = Design_test,  VehBrand = Br_test,  Region = Re_test,  LogVol = LogVol_test)
+
+# predict() returns an n x 1 matrix; as.vector() turns it into a plain vector
+learn$nn <- as.vector(predict(model, x_learn, batch_size = 50000, verbose = 0))
+test$nn  <-
+
+# Null model: the same frequency for every policy, times its exposure
+learn$null <- base_rate * learn$Exposure
+test$null  <- base_rate * test$Exposure
+
+tibble(model = c("Null", "GLM", "Neural network"),
+       learn = c( ),
+       test  = c( ))
+```
+
+Check your formula from Q2 on the test set:
+
+```{r}
+y  <- test$ClaimNb
+mu <- test$nn
+keras_loss <- mean(mu - y * log(mu))
+c(deviance = poisson_deviance(y, mu),
+  from_keras_loss = )
+```
+
+**Q4.** Does the network beat the GLM on the test set? Compare the size of the improvement with the improvement of the GLM over the null model.
+
+### The balance property
+
+A Poisson GLM with an intercept satisfies $\sum_i \hat\mu_i = \sum_i y_i$ on the data it was fitted to: total predicted claims equal total observed claims. That matters for pricing, because the premium for the whole portfolio is set by the total.
+
+**Q5.** Compare total observed and predicted claims on the learning set for the GLM and the network. Is the network balanced? Why not?
+
+```{r}
+
+```
+
+### What did the embeddings learn?
+
+The embedding weights are stored in the layer `BrEmb` as an $11 \times 2$ matrix, one row per brand. Plotting the rows shows how the network has arranged the brands.
+
+```{r}
+#| fig-width: 6
+#| fig-height: 5
+# get_weights() returns a list of the layer's weight arrays; an embedding has just one
+brand_emb <- get_weights(get_layer(model, "BrEmb"))[[1]]
+
+# Observed claim frequency per brand, for comparison
+brand_freq <- learn %>%
+  group_by(VehBrand) %>%
+  summarise(frequency = sum(ClaimNb) / sum(Exposure), exposure = sum(Exposure))
+
+tibble(VehBrand = levels(dat$VehBrand),
+       dim1 = brand_emb[, 1], dim2 = brand_emb[, 2]) %>%
+  left_join(brand_freq, by = "VehBrand") %>%
+  ggplot(aes(x = dim1, y = dim2, label = VehBrand, colour = frequency)) +
+  geom_text(size = 4) +
+  scale_colour_viridis_c() +
+  labs(x = "Embedding dimension 1", y = "Embedding dimension 2",
+       colour = "Observed\nfrequency", title = "Learned 2-d embedding of VehBrand")
+```
+
+**Q6.** Do brands with similar observed claim frequencies end up close together? Why should we be careful about reading too much into the embedding coordinates? *Hint: does a brand's position reflect only its own claims experience? Would rotating all the embedding vectors change the predictions?*
+
