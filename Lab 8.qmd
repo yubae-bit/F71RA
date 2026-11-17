@@ -1,0 +1,323 @@
+---
+title: "Lab 8: Bottleneck neural networks"
+subtitle: "F71RA Machine Learning for Risk and Insurance 1"
+author: "Yubo Rasmussen"
+format: docx
+editor: visual
+toc: true
+---
+
+## Before you start
+
+A motor insurer describes each car by many technical characteristics: weight, power, engine size, torque, engine speed and so on. These are strongly related to each other. Can we summarise each car by just **two numbers**, and lose as little information as possible?
+
+Principal component analysis (PCA) answers this with the best possible *linear* summary. A **bottleneck neural network** (BNN), also called an **autoencoder**, does the same job with a neural network:
+
+-   an **encoder** squeezes the five features of each car through a narrow layer of two neurons, the *bottleneck*;
+-   a **decoder** tries to rebuild the five original features from those two numbers;
+-   the network is trained to make the rebuilt features as close as possible to the originals.
+
+Because the network uses nonlinear activation functions, it can find *curved* summaries that PCA cannot. In this lab we build a BNN with the R package **torch**, compare it with PCA, and look at what it has learned.
+
+**Learning objectives.** By the end of this lab you should be able to
+
+-   compute the reconstruction error of PCA and explain what it measures;
+-   build an encoder–decoder network in torch with `nn_module()`;
+-   train it by gradient descent and compare its reconstruction error with PCA's;
+-   explain why a *linear* autoencoder cannot beat PCA, and why a nonlinear one can;
+-   identify which observations benefit most from a nonlinear summary;
+-   explain why neural network results depend on the random starting point.
+
+**Installing torch (once only).** torch runs natively in R: no Python is needed. Install it once per computer. The chunk below is not run when the document is rendered (`eval: false`).
+
+```{r}
+#| eval: false
+install.packages("torch")
+library(torch)
+install_torch()   # downloads the native torch libraries; takes a few minutes
+```
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)
+library(torch)
+torch_set_num_threads(2)   # use 2 CPU threads, so results are reproducible
+```
+
+Make sure `SportsCars.csv` (from the course GitHub page) is in the same folder as this notebook.
+
+------------------------------------------------------------------------
+
+## Part 1: The data and the PCA benchmark
+
+### Features
+
+`SportsCars.csv` describes 475 car models. As in the lecture, we build five features from the technical specification:
+
+$$
+x_1 = \log\frac{\texttt{weight}}{\texttt{max\_power}}, \quad
+x_2 = \log\frac{\texttt{max\_power}}{\texttt{cubic\_capacity}}, \quad
+x_3 = \log(\texttt{max\_torque}), \quad
+x_4 = \log(\texttt{max\_engine\_speed}), \quad
+x_5 = \log(\texttt{cubic\_capacity}).
+$$
+
+Each feature is then **standardised** to mean 0 and standard deviation 1, so that no feature dominates just because of its units.
+
+```{r}
+SC <- read.csv("SportsCars.csv", sep = ";")
+
+SC <- SC %>%
+  mutate(x1 = log(weight / max_power),
+         x2 = ,
+         x3 = ,
+         x4 = ,
+         x5 = ,
+         # three groups by the Ingenbleek-Lemaire index tau; tau < 17 = sports car
+         sports_type = cut(tau, breaks = c(0, 17, 21, 100), right = FALSE,
+                           labels = c("tau < 17 (sports car)", "17 <= tau < 21", "tau >= 21")))
+
+X_raw <- SC %>% select(x1:x5) %>% as.matrix()
+X <- scale(X_raw)        # subtract column means, divide by column standard deviations
+n <- nrow(X)
+dim(X)
+```
+
+### The reconstruction error
+
+Suppose a method compresses each car $\mathbf{x}_i \in \mathbb{R}^5$ into two numbers and then rebuilds an approximation $\hat{\mathbf{x}}_i$. Its **reconstruction error** is the root mean squared distance between each car and its reconstruction:
+
+$$
+\text{RE} = \sqrt{\frac{1}{n}\sum_{i=1}^n \lVert \mathbf{x}_i - \hat{\mathbf{x}}_i \rVert^2 } .
+$$
+
+For PCA with two components, the encoder multiplies each car by the first two loading vectors (the first two columns $\mathbf{V}_2$ of $\mathbf{V}$ in the singular value decomposition $\mathbf{X} = \mathbf{U}\mathbf{D}\mathbf{V}^\top$), and the decoder multiplies back: $\hat{\mathbf{X}} = \mathbf{X}\mathbf{V}_2\mathbf{V}_2^\top$.
+
+```{r}
+V2    <- svd(X)$v[, 1:2]                 # first two principal component loadings
+X_pca <-                                 # encode to 2 numbers, then decode back to 5
+
+recon_error <- function(X, X_hat)        # the formula above
+pca_re <- recon_error(X, X_pca)
+pca_re
+```
+
+PCA's reconstruction error with two components is about **0.612**. This is the best that *any* linear two-dimensional compression can achieve (the Eckart–Young theorem). The question for this lab is whether a nonlinear network can do better.
+
+------------------------------------------------------------------------
+
+## Part 2: Building the bottleneck network
+
+### Architecture
+
+Following the lecture, the network has layers of width $(q_0, q_1, q_2) = (5, 7, 2)$ on the way in, and is symmetric on the way out:
+
+```
+input (5) ─► layer1 (7, tanh) ─► bottleneck (2, tanh) ─► layer3 (7, tanh) ─► output (5, linear)
+            └──────────── encoder ─────────────┘        └──────────── decoder ────────────┘
+```
+
+In equations, with weight matrices $\mathbf{W}_1, \dots, \mathbf{W}_4$ and no bias terms:
+
+$$
+\underbrace{\mathbf{z}_i = \tanh\!\big(\mathbf{W}_2 \tanh(\mathbf{W}_1 \mathbf{x}_i)\big)}_{\text{encoder: } \mathbb{R}^5 \to \mathbb{R}^2},
+\qquad
+\underbrace{\hat{\mathbf{x}}_i = \mathbf{W}_4 \tanh(\mathbf{W}_3 \mathbf{z}_i)}_{\text{decoder: } \mathbb{R}^2 \to \mathbb{R}^5}.
+$$
+
+The output layer is *linear* (no activation), because standardised features can take any real value.
+
+In torch, a network is an `nn_module()`. Its `initialize()` function creates the layers, and its `forward()` function says how an input flows through them. We also add an `encode()` function that stops at the bottleneck, so we can extract each car's two-number summary later.
+
+```{r}
+BNN <- nn_module(
+  "BNN",
+  # initialize() creates the layers. nn_linear(a, b) maps a inputs to b outputs.
+  # bias = FALSE: no intercepts, as in the lecture. The inputs have mean 0 and
+  # tanh(0) = 0, so a car with all features at their average maps to 0 everywhere.
+  # linear = TRUE removes the tanh activations (used in Part 4).
+  initialize = function(q0 = 5, q1 = 7, q2 = 2, linear = FALSE) {
+    self$act        <- if (linear) function(x) x else torch_tanh
+    self$layer1     <- nn_linear(q0, q1, bias = FALSE)
+    self$bottleneck <- nn_linear(q1, q2, bias = FALSE)
+    self$layer3     <-                       # decoder: 2 -> 7
+    self$output     <-                       # decoder: 7 -> 5
+  },
+  # encode(): input -> bottleneck (the 2-number summary of each car)
+  encode = function(x) {
+    self$act(self$bottleneck(self$act(self$layer1(x))))
+  },
+  # forward(): input -> bottleneck -> reconstruction
+  forward = function(x) {
+    self$output(self$act(self$layer3(self$encode(x))))
+  }
+)
+
+torch_manual_seed(100)       # reproducible random starting weights
+model <- BNN()
+model
+
+# number of trainable parameters
+sum(sapply(model$parameters, function(p) p$numel()))
+```
+
+**Q1.** Check the number of parameters by hand. How many numbers does the network use to describe *each car* once it is trained, and how does that compare with the five numbers we started with?
+
+
+------------------------------------------------------------------------
+
+## Part 3: Training
+
+### Loss and optimiser
+
+The network is trained to make its output close to its *input*: the input and the target are the same matrix $\mathbf{X}$. The loss is the **mean squared error** over all $n \times 5$ entries,
+
+$$
+\text{MSE} = \frac{1}{5n}\sum_{i=1}^n \lVert \mathbf{x}_i - \hat{\mathbf{x}}_i \rVert^2 ,
+$$
+
+which is minimised with the **Adam** optimiser. Adam is a version of gradient descent that adapts the step size separately for each weight. With only 475 cars, every update can use all of them at once (*full-batch* training), so one epoch is one update.
+
+**Q2.** Show that $\text{RE} = \sqrt{5 \times \text{MSE}}$. Why the factor 5?
+
+
+### The training loop
+
+Each pass through the loop does the same four steps: compute the reconstruction, compute the loss, compute the gradients by backpropagation, and take one optimiser step.
+
+```{r}
+X_t <- torch_tensor(X, dtype = torch_float())     # torch works with tensors, not R matrices
+
+train_bnn <- function(model, X_t, lr = 0.01, epochs = 5000) {
+  optimizer <- optim_adam(model$parameters, lr = lr)
+  re <- numeric(epochs)
+  for (epoch in 1:epochs) {
+    optimizer$zero_grad()                     # clear the gradients from the previous step
+    loss <- nnf_mse_loss(model(X_t), X_t)     # target = input: rebuild X from X
+                                              # backpropagation: gradients of the loss
+                                              # update all 98 weights
+    re[epoch] <- sqrt(5 * loss$item())        # record the reconstruction error (Q2)
+  }
+  re
+}
+
+re_bnn <- train_bnn(model, X_t)
+tail(re_bnn, 1)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 4
+tibble(epoch = seq_along(re_bnn), RE = re_bnn) %>%
+  ggplot(aes(x = epoch, y = RE)) +
+  geom_line() +
+  geom_hline(yintercept = pca_re, colour = "blue", linetype = "dashed") +
+  coord_cartesian(ylim = c(0.5, 1.5)) +
+  labs(x = "Epoch", y = "Reconstruction error",
+       title = "Bottleneck network training (dashed line: PCA)")
+```
+
+**Q3.** After how many epochs does the network beat PCA, and what is its final reconstruction error? Retrain with learning rate 0.001 for 1,000 epochs. What happens, and what does this tell you about comparing a network with PCA?
+
+```{r}
+torch_manual_seed(100)
+re_slow <- 
+
+```
+
+
+------------------------------------------------------------------------
+
+## Part 4: A linear autoencoder is PCA
+
+What does the nonlinearity buy us? Remove the $\tanh$ activations, so that every layer is linear, and train again.
+
+```{r}
+torch_manual_seed(100)
+model_lin <- 
+re_lin <- 
+
+c(PCA = pca_re, linear_BNN = tail(re_lin, 1), BNN = tail(re_bnn, 1))
+```
+
+**Q4.** Compare the linear network's reconstruction error with PCA's. Explain why it cannot do better, however long it is trained.
+
+
+------------------------------------------------------------------------
+
+## Part 5: The cars in the bottleneck
+
+The encoder gives every car two numbers. Plotting them shows how the network has organised the cars. For comparison, we plot the first two principal component scores next to them.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 4.5
+# with_no_grad(): we only need values, not gradients
+z <- with_no_grad(as_array(model$encode(X_t)))
+
+bind_rows(
+  tibble(method = "Bottleneck network", dim1 = z[, 1], dim2 = z[, 2], sports_type = SC$sports_type),
+  tibble(method = "PCA", dim1 = (X %*% V2)[, 1], dim2 = (X %*% V2)[, 2], sports_type = SC$sports_type)
+) %>%
+  ggplot(aes(x = dim1, y = dim2, colour = sports_type)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~ method, scales = "free") +
+  labs(x = "Dimension 1", y = "Dimension 2", colour = NULL) +
+  theme(legend.position = "bottom")
+```
+
+**Q5.** Do the three groups of cars separate in the bottleneck? Why must the bottleneck values lie between $-1$ and $1$, unlike the PCA scores?
+
+
+------------------------------------------------------------------------
+
+## Part 6: Which cars benefit?
+
+The overall reconstruction error is an average. Compare the squared reconstruction error of each car under the network and under PCA.
+
+```{r}
+X_bnn <- with_no_grad(as_array(model(X_t)))
+
+per_car <- SC %>%
+  select(brand, type, model, max_engine_speed, cubic_capacity, max_power, sports_type) %>%
+  mutate(err_pca = rowSums((X - X_pca)^2),
+         err_bnn = ,
+         improvement = err_pca - err_bnn)
+
+# share of cars reconstructed better by the network
+mean(per_car$improvement > 0)
+
+# the 6 cars that improve most
+per_car %>% arrange(desc(improvement)) %>% head(6)
+```
+
+```{r}
+#| fig-width: 6
+#| fig-height: 5
+ggplot(per_car, aes(x = err_pca, y = err_bnn, colour = max_engine_speed)) +
+  geom_point() +
+  geom_abline(linetype = "dashed") +
+  scale_x_sqrt() + scale_y_sqrt() +
+  scale_colour_viridis_c() +
+  labs(x = "Squared error, PCA (square-root scale)",
+       y = "Squared error, bottleneck network",
+       colour = "Max engine\nspeed (rpm)")
+```
+
+**Q6.** Does the network improve every car? Which cars gain the most, and what do they have in common?
+
+
+------------------------------------------------------------------------
+
+## Part 7: How much does the starting point matter?
+
+A network's training starts from random weights, and different starting points can lead to different final networks.
+
+**Q7.** Train the network from five different random seeds and compare the final reconstruction errors. Are they all better than PCA? What does this mean for reporting results from a neural network?
+
+```{r}
+# for each seed s = 1, ..., 5: set torch_manual_seed(s), train a new BNN(),
+# and record the final reconstruction error
+
+```
