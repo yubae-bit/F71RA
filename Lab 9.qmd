@@ -1,0 +1,302 @@
+---
+title: "Lab 9: K-means and K-medoids clustering"
+subtitle: "F71RA Machine Learning for Risk and Insurance 1"
+author: "Yubo Rasmussen"
+format: docx
+editor: visual
+toc: true
+---
+
+## Before you start
+
+An insurer with hundreds of car models cannot estimate a separate premium for each one, because most models have too few policies. One solution is to sort the models into a small number of groups of similar cars, and to use the group as a rating factor. This is **clustering**. It is *unsupervised* learning: there is no response variable, and nobody tells the algorithm which groups exist.
+
+In this lab we cluster 475 car models by their technical specification with **K-means** and **K-medoids**. We choose the number of clusters, check whether the result depends on the random starting point, and compare the clusters with an expert's definition of a sports car.
+
+**Learning objectives.** By the end of this lab you should be able to
+
+-   explain what K-means minimises, and why features are standardised first;
+-   choose a number of clusters with the elbow method and the silhouette, and recognise when the choice is not clear-cut;
+-   explain why K-means needs several random starts;
+-   describe clusters in words and compare them with an external classification;
+-   run K-medoids with `pam()` and explain how it differs from K-means.
+
+**Code comments.** Key lines are commented. If a line is unclear, run it on its own and inspect the result with `str()`, `dim()` or `head()`.
+
+**Packages.** The `cluster` package comes with R, so there is nothing new to install.
+
+```{r}
+#| message: false
+#| warning: false
+library(tidyverse)
+library(cluster)   # pam() and silhouette()
+```
+
+Make sure `SportsCars.csv` (from the course GitHub page) is in the same folder as this notebook.
+
+------------------------------------------------------------------------
+
+## Part 1: The data
+
+### Features
+
+We describe each car by five features built from its technical specification:
+
+$$
+x_1 = \log\frac{\texttt{weight}}{\texttt{max\_power}}, \quad
+x_2 = \log\frac{\texttt{max\_power}}{\texttt{cubic\_capacity}}, \quad
+x_3 = \log(\texttt{max\_torque}), \quad
+x_4 = \log(\texttt{max\_engine\_speed}), \quad
+x_5 = \log(\texttt{cubic\_capacity}).
+$$
+
+The data also contain an expert index `tau`. Cars with `tau` below 17 are classed as sports cars. We do **not** use `tau` for clustering; we keep it aside to compare with the clusters at the end.
+
+```{r}
+SC <- read.csv("SportsCars.csv", sep = ";") %>%
+  mutate(x1 = log(weight / max_power),
+         x2 = log(max_power / cubic_capacity),
+         x3 = log(max_torque),
+         x4 = log(max_engine_speed),
+         x5 = log(cubic_capacity),
+         # right = FALSE: a car with tau exactly 17 is not a sports car
+         sports_type = cut(tau, breaks = c(0, 17, 21, 100), right = FALSE,
+                           labels = c("tau < 17 (sports car)", "17 <= tau < 21", "tau >= 21")))
+
+# scale(): subtract each column's mean and divide by its standard deviation
+X <- SC %>% select(x1:x5) %>% as.matrix() %>% scale()
+dim(X)
+count(SC, sports_type)
+```
+
+### Why standardise?
+
+Clustering puts cars together if the *distance* between them is small. The squared Euclidean distance between two cars adds up the squared differences over all features, so a feature with a large variance counts for more.
+
+**Q1.** Compute the share of the total variance contributed by each of the five *raw* specifications below. Which would dominate the distances? What are the shares after standardising?
+
+```{r}
+raw <- SC %>% select(weight, max_power, cubic_capacity, max_torque, max_engine_speed)
+
+# variance of each column as a share of the total
+v <- 
+
+```
+
+------------------------------------------------------------------------
+
+## Part 2: K-means and the number of clusters
+
+### What K-means does
+
+K-means divides the $n$ cars into $K$ clusters $C_1, \dots, C_K$, each represented by its **centre** $\boldsymbol\mu_k$, the mean of the cars in it. It tries to minimise the **total within-cluster dissimilarity**
+
+$$
+\text{TWCD}(K) = \sum_{k=1}^K \sum_{i \in C_k} \lVert \mathbf{x}_i - \boldsymbol\mu_k \rVert^2 .
+$$
+
+The algorithm starts from $K$ randomly chosen cars as centres and repeats two steps until nothing changes:
+
+1.  assign each car to its nearest centre;
+2.  move each centre to the mean of the cars assigned to it.
+
+Neither step can increase the TWCD, so the algorithm always stops, but not necessarily at the best solution. `kmeans()` therefore has an argument `nstart`: it runs the algorithm from that many random starts and keeps the best.
+
+```{r}
+set.seed(100)      # the starting centres are random
+K_max <- 10
+
+# a list of 10 fits, for K = 1, ..., 10; each is the best of 50 random starts
+fits <- lapply(1:K_max, function(K) kmeans( ))
+
+# tot.withinss is R's name for the TWCD
+TWCD <- sapply(fits, function(f) f$tot.withinss)
+round(TWCD, 1)
+```
+
+**Q2.** Explain why TWCD(1) is exactly $5 \times 474 = 2370$. Why can TWCD not be used on its own to choose $K$ by picking the smallest value?
+
+### Two ways to choose K
+
+The **elbow method** plots TWCD against $K$ and looks for the point after which extra clusters help much less.
+
+The **silhouette** compares how close a car is to its own cluster with how close it is to the next best one. For car $i$, let $a_i$ be its average distance to the other cars in its own cluster, and $b_i$ the smallest average distance to the cars of any other cluster. Then
+
+$$
+s_i = \frac{b_i - a_i}{\max(a_i, b_i)} \in [-1, 1].
+$$
+
+Values near 1 mean the car is well placed; values near 0 mean it lies between two clusters. We want a *high* average silhouette.
+
+```{r}
+#| fig-width: 9
+#| fig-height: 3.5
+D <- dist(X)       # Euclidean distances between all pairs of cars
+
+# average silhouette for K = 2, ..., 10 (not defined for a single cluster)
+# hint: silhouette(cluster_numbers, D)[, "sil_width"] gives one value per car
+sil <- sapply(2:K_max, function(K) )
+
+# percentage fall in TWCD from each extra cluster, and the silhouettes
+round(100 * (1 - TWCD[-1] / TWCD[-K_max]), 1)
+round(sil, 3)
+
+bind_rows(tibble(K = 1:K_max, value = TWCD, criterion = "TWCD (look for an elbow)"),
+          tibble(K = 2:K_max, value = sil,  criterion = "Average silhouette (higher is better)")) %>%
+  ggplot(aes(x = K, y = value)) +
+  geom_line(linetype = "dotted") +
+  geom_point(colour = "blue") +
+  facet_wrap(~ criterion, scales = "free_y") +
+  scale_x_continuous(breaks = 1:K_max) +
+  labs(x = "Number of clusters K", y = NULL)
+```
+
+**Q3.** Which $K$ does each method suggest? Is the choice clear-cut?
+
+------------------------------------------------------------------------
+
+## Part 3: Does the starting point matter?
+
+Above we let `kmeans()` try 50 random starts. What happens if we use only one?
+
+**Q4.** Run K-means with $K = 4$ and a *single* random start (`nstart = 1`) for 200 different seeds, and tabulate the TWCD values. How often does a single start find the best solution? Repeat with `nstart = 25`.
+
+```{r}
+one_start <- sapply(1:200, function(s) {
+  set.seed(s)
+  # one random start, K = 4; return the TWCD
+
+})
+table(round(one_start, 1))
+
+# now the same with 25 random starts
+
+```
+
+------------------------------------------------------------------------
+
+## Part 4: What are the clusters?
+
+### Profiles
+
+K-means numbers its clusters arbitrarily. To make the output easier to read, we renumber them by their centre on $x_1$, so cluster 1 has the lowest weight per kilowatt and cluster 4 the highest.
+
+```{r}
+km <- fits[[4]]
+
+# order() lists the old cluster numbers from lowest to highest x1 centre;
+# match() turns each car's old number into its position in that list
+renumber <- function(cluster, centres) factor(match(cluster, order(centres[, "x1"])))
+
+SC <- SC %>% mutate(cluster_km = renumber(km$cluster, km$centers))
+
+# centres in standardised units, in the new order
+centres_km <- km$centers[order(km$centers[, "x1"]), ]
+rownames(centres_km) <- 1:4
+round(centres_km, 2)
+
+# average specification of the cars in each cluster, in the original units
+SC %>%
+  group_by(cluster_km) %>%
+  summarise(cars = n(),
+            across(c(weight, max_power, cubic_capacity, max_engine_speed, top_speed), mean)) %>%
+  mutate(across(where(is.numeric), ~ round(.x)))
+```
+
+### Comparison with the expert index
+
+```{r}
+# cross-tabulate sports_type and cluster_km
+
+```
+
+**Q5.** Describe each cluster in words. How well do the clusters agree with the expert's definition of a sports car, given that `tau` was not used to find them?
+
+### A picture
+
+The clusters live in five dimensions. To draw them we project the cars and the centres on the first two principal components.
+
+```{r}
+#| fig-width: 8
+#| fig-height: 5
+V2 <- svd(X)$v[, 1:2]        # loadings of the first two principal components
+
+plot_clusters <- function(cluster, centres, title) {
+  # X %*% V2 gives the cars' coordinates; centres %*% V2 puts the centres on the same axes
+  cars <- tibble(PC1 = (X %*% V2)[, 1], PC2 = (X %*% V2)[, 2], cluster = cluster)
+  mids <- tibble(PC1 = (centres %*% V2)[, 1], PC2 = (centres %*% V2)[, 2])
+  ggplot(cars, aes(x = PC1, y = PC2)) +
+    geom_point(aes(colour = cluster), alpha = 0.7) +
+    geom_point(data = mids, size = 4) +
+    labs(x = "First principal component", y = "Second principal component",
+         colour = "Cluster", title = title)
+}
+plot_clusters(SC$cluster_km, centres_km, "K-means, K = 4 (black: centres)")
+```
+
+------------------------------------------------------------------------
+
+## Part 5: K-medoids
+
+### From means to medoids
+
+A K-means centre is an average, so it is usually not a real car. **K-medoids** instead represents each cluster by one of its own members, the **medoid**: the car with the smallest total distance to the others in the cluster. It can use any distance. We use the **Manhattan** distance $\sum_j |x_{ij} - x_{lj}|$, which adds up absolute rather than squared differences, so a single large difference counts for less.
+
+`pam()` (*partitioning around medoids*) builds its starting medoids by a fixed rule instead of at random, so it needs no seed.
+
+```{r}
+pm <- pam(X, k = , metric = )
+
+SC <- SC %>% mutate(cluster_pam = renumber(pm$clustering, pm$medoids))
+
+# id.med holds the row numbers of the medoids: four real cars
+medoid_order <- order(pm$medoids[, "x1"])
+SC[pm$id.med[medoid_order], c("brand", "type", "cubic_capacity", "max_power", "weight", "tau")]
+table(SC$sports_type, SC$cluster_pam)
+```
+
+```{r}
+#| fig-width: 8
+#| fig-height: 5
+plot_clusters(SC$cluster_pam, pm$medoids, "K-medoids, K = 4 (black: medoids)")
+```
+
+**Q6.** Cross-tabulate the two clusterings. On how many cars do they agree, and where do they differ? What is the advantage of a medoid over a mean when you explain a rating group to an underwriter?
+
+```{r}
+# cross-tabulate the two clusterings, and count the cars on which they agree
+
+```
+
+### Is K-medoids more robust?
+
+Textbooks say that K-medoids is more *robust* to outliers than K-means. There are two different things this could mean: the **centre** of a cluster may be less affected by an outlier, or the **assignment** of all the other cars may be.
+
+**Q7.** (a) Take the cars in K-means cluster 1 and add 25 to $x_1$ of the first one. Compare the effect on the mean and on the medoid of $x_1$. (b) Suppose the weight of the first car in the data was typed with two extra zeros. Re-standardise, rerun both methods, and compare the new clusters with the old ones for the other 474 cars. What do you conclude?
+
+```{r}
+# (a) effect of one outlier on the centre of a fixed group of cars
+# medoid: the row with the smallest total Manhattan distance to the other rows
+medoid <- function(G) G[which.min(rowSums(as.matrix(dist(G, method = "manhattan")))), ]
+
+G     <- X[SC$cluster_km == 1, ]
+G_bad <- G
+G_bad[1, "x1"] <- G_bad[1, "x1"] + 25
+
+round(c(mean_before   = mean(G[, "x1"]),          mean_after   = mean(G_bad[, "x1"]),
+        medoid_before = unname(medoid(G)["x1"]),  medoid_after = unname(medoid(G_bad)["x1"])), 2)
+
+# (b) effect of one data-entry error on the whole clustering
+SC_bad <- SC
+SC_bad$weight[1] <- SC_bad$weight[1] * 100
+SC_bad <- SC_bad %>% mutate(x1 = log(weight / max_power))
+X_bad  <- SC_bad %>% select(x1:x5) %>% as.matrix() %>% scale()
+
+set.seed(100)
+km_bad <- 
+pm_bad <- 
+
+# [-1] leaves out the corrupted car itself; the new cluster numbers are arbitrary
+table(before = SC$cluster_km[-1],  after = km_bad$cluster[-1])
+table(before = SC$cluster_pam[-1], after = pm_bad$clustering[-1])
+```
